@@ -1,3 +1,3 @@
-provider "scaffolding" {
+provider "momento" {
   # example configuration here
 }

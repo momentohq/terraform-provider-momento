@@ -5,72 +5,138 @@ package provider
 
 import (
 	"context"
-	"net/http"
+	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/momentohq/client-sdk-go/auth"
+	"github.com/momentohq/client-sdk-go/config"
+	"github.com/momentohq/client-sdk-go/momento"
 )
 
-// Ensure ScaffoldingProvider satisfies various provider interfaces.
-var _ provider.Provider = &ScaffoldingProvider{}
+// Ensure MomentoProvider satisfies various provider interfaces.
+var _ provider.Provider = &MomentoProvider{}
 
-// ScaffoldingProvider defines the provider implementation.
-type ScaffoldingProvider struct {
+// MomentoProvider defines the provider implementation.
+type MomentoProvider struct {
 	// version is set to the provider version on release, "dev" when the
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
 	version string
 }
 
-// ScaffoldingProviderModel describes the provider data model.
-type ScaffoldingProviderModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
+// MomentoProviderModel describes the provider data model.
+type MomentoProviderModel struct {
+	AuthToken types.String `tfsdk:"auth_token"`
 }
 
-func (p *ScaffoldingProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "scaffolding"
+func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "momento"
 	resp.Version = p.version
 }
 
-func (p *ScaffoldingProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
+func (p *MomentoProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"endpoint": schema.StringAttribute{
-				MarkdownDescription: "Example provider attribute",
+			"auth_token": schema.StringAttribute{
+				MarkdownDescription: "Momento API key. May also be provided via MOMENTO_AUTH_TOKEN environment variable.",
 				Optional:            true,
 			},
 		},
 	}
 }
 
-func (p *ScaffoldingProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	var data ScaffoldingProviderModel
+func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	// Retrieve provider data from configuration
+	var model MomentoProviderModel
+	diags := req.Config.Get(ctx, &model)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if model.AuthToken.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("auth_token"),
+			"Unknown Momento Auth Token",
+			"The provider cannot create the Momento API client as there is an unknown configuration value for the Momento authentication token. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the MOMENTO_AUTH_TOKEN environment variable.",
+		)
+	}
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
+	// Default values to environment variables, but override
+	// with Terraform configuration value if set.
 
-	// Example client configuration for data sources and resources
-	client := http.DefaultClient
+	authToken := os.Getenv("MOMENTO_AUTH_TOKEN")
+
+	if !model.AuthToken.IsNull() {
+		authToken = model.AuthToken.ValueString()
+	}
+
+	// If any of the expected configurations are missing, return
+	// errors with provider-specific guidance.
+
+	if authToken == "" {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("auth_token"),
+			"Missing Momento Auth Token",
+			"The provider cannot create the Momento API client as there is a missing or empty value for the Momento authentication token. "+
+				"Set the auth_token value in the configuration or use the MOMENTO_AUTH_TOKEN environment variable. "+
+				"If either is already set, ensure the value is not empty.",
+		)
+	}
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Create the Momento API client.
+
+	credProvider, err := auth.NewStringMomentoTokenProvider(authToken)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create Momento Token Provider",
+			"An unexpected error occurred when creating the Momento API client. "+
+				"If the error is not clear, please contact the provider developers.\n\n"+
+				"Momento Client Error: "+err.Error(),
+		)
+		return
+	}
+
+	client, err := momento.NewCacheClient(config.LaptopLatest(), credProvider, 1)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create Momento Cache Client",
+			"An unexpected error occurred when creating the Momento API client. "+
+				"If the error is not clear, please contact the provider developers.\n\n"+
+				"Momento Client Error: "+err.Error(),
+		)
+		return
+	}
+
+	// Make the HashiCups client available during DataSource and Resource
+	// type Configure methods.
 	resp.DataSourceData = client
 	resp.ResourceData = client
 }
 
-func (p *ScaffoldingProvider) Resources(ctx context.Context) []func() resource.Resource {
+func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewExampleResource,
+		NewCacheResource,
 	}
 }
 
-func (p *ScaffoldingProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+func (p *MomentoProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewExampleDataSource,
 	}
@@ -78,7 +144,7 @@ func (p *ScaffoldingProvider) DataSources(ctx context.Context) []func() datasour
 
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
-		return &ScaffoldingProvider{
+		return &MomentoProvider{
 			version: version,
 		}
 	}

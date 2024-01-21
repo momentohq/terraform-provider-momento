@@ -1,3 +1,3 @@
-resource "scaffolding_example" "example" {
-  configurable_attribute = "some-value"
+resource "momento_cache" "example" {
+  name = "example-cache"
 }
