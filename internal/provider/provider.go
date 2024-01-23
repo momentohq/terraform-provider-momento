@@ -1,6 +1,3 @@
-// Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
-
 package provider
 
 import (
@@ -138,7 +135,7 @@ func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resou
 
 func (p *MomentoProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewExampleDataSource,
+		NewCachesDataSource,
 	}
 }
 

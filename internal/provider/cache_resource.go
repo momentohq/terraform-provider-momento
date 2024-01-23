@@ -1,6 +1,3 @@
-// Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
-
 package provider
 
 import (
@@ -20,6 +17,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
 	_ resource.Resource                = &CacheResource{}
+	_ resource.ResourceWithConfigure   = &CacheResource{}
 	_ resource.ResourceWithImportState = &CacheResource{}
 )
 
@@ -50,7 +48,11 @@ func (r *CacheResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Name of the cache.",
 				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
+			// The testing framework requires an id attribute to be present in every data source and resource
 			"id": schema.StringAttribute{
 				Description: "The ID of the cache.",
 				Computed:    true,
@@ -83,9 +85,11 @@ func (r *CacheResource) Configure(ctx context.Context, req resource.ConfigureReq
 }
 
 func (r *CacheResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	// Retrieve values from the plan
 	var plan CacheResourceModel
+
+	// Retrieve values from the plan
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -99,9 +103,15 @@ func (r *CacheResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create cache, got error: %s", err))
 		return
 	}
-	var _, ok = createResp.(responses.CreateCacheAlreadyExists)
-	if ok {
+
+	switch createResp.(type) {
+	case *responses.CreateCacheSuccess:
+		break
+	case *responses.CreateCacheAlreadyExists:
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create cache, cache with name \"%s\" already exists", plan.Name.ValueString()))
+		return
+	default:
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create cache, got unknown response type: %T", createResp))
 		return
 	}
 
@@ -113,68 +123,103 @@ func (r *CacheResource) Create(ctx context.Context, req resource.CreateRequest, 
 }
 
 func (r *CacheResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var data CacheResourceModel
+	var state CacheResourceModel
 
 	// Read Terraform prior state data into the model
-	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// If applicable, this is a great opportunity to initialize any necessary
-	// provider client data and make a call using it.
-	// httpResp, err := r.client.Do(httpReq)
-	// if err != nil {
-	//     resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read example, got error: %s", err))
-	//     return
-	// }
+	// Find cache
+	var client momento.CacheClient = *r.client
+	found, err := findCache(ctx, client, state.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list caches, got error: %s", err))
+		return
+	}
+	if !found {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read cache, cache with name \"%s\" not found", state.Name.ValueString()))
+		return
+	}
 
-	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	state.Id = types.StringValue(state.Name.ValueString())
+
+	// Set refreshed state
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
 }
 
 func (r *CacheResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var data CacheResourceModel
+	var state CacheResourceModel
 
-	// Read Terraform plan data into the model
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	// Read Terraform prior state data into the model
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// If applicable, this is a great opportunity to initialize any necessary
-	// provider client data and make a call using it.
-	// httpResp, err := r.client.Do(httpReq)
-	// if err != nil {
-	//     resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update example, got error: %s", err))
-	//     return
-	// }
-
-	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.AddError("Internal Error", "Cache resource does not support updates")
 }
 
 func (r *CacheResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var data CacheResourceModel
+	var state CacheResourceModel
 
 	// Read Terraform prior state data into the model
-	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// If applicable, this is a great opportunity to initialize any necessary
-	// provider client data and make a call using it.
-	// httpResp, err := r.client.Do(httpReq)
-	// if err != nil {
-	//     resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete example, got error: %s", err))
-	//     return
-	// }
+	// Delete cache
+	var client momento.CacheClient = *r.client
+	deleteResp, err := client.DeleteCache(ctx, &momento.DeleteCacheRequest{
+		CacheName: state.Name.ValueString(),
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete cache, got error: %s", err))
+		return
+	}
+
+	switch deleteResp.(type) {
+	case *responses.DeleteCacheSuccess:
+		break
+	default:
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete cache, got unknown response type: %T", deleteResp))
+		return
+	}
 }
 
 func (r *CacheResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
+}
+
+func findCache(ctx context.Context, client momento.CacheClient, name string) (bool, error) {
+	token := ""
+	for {
+		resp, err := client.ListCaches(ctx, &momento.ListCachesRequest{NextToken: token})
+		if err != nil {
+			return false, err
+		}
+		if r, ok := resp.(*responses.ListCachesSuccess); ok {
+			for _, cacheInfo := range r.Caches() {
+				if cacheInfo.Name() == name {
+					return true, nil
+				}
+			}
+			token = r.NextToken()
+			if token == "" {
+				break
+			}
+		} else {
+			return false, fmt.Errorf("unexpected response type %T", resp)
+		}
+	}
+	return false, nil
 }
