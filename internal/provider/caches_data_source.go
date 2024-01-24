@@ -117,6 +117,8 @@ func (d *CachesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		data.Caches = append(data.Caches, cacheState)
 	}
 
+	data.Id = types.StringValue("placeholder")
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
