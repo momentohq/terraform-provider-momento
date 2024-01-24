@@ -1,3 +1,4 @@
+# Configuration-based authentication
 provider "momento" {
-  # example configuration here
+  auth_token = "my-token"
 }
