@@ -25,3 +25,8 @@ linters:
     - unparam
     - unused
     - vet
+
+linters-settings:
+  misspell:
+    ignore-words:
+      momento
