@@ -6,7 +6,7 @@ description: |-
 
 # Momento Provider
 
-![logo](https://docs.momentohq.com/img/momento-logo-white.svg)
+![logo](https://docs.momentohq.com/img/momento-logo-forest.svg)
 
 The terraform provider to manage [Momento](https://www.gomomento.com/) resources.
 
