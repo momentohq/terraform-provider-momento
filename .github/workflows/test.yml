@@ -53,7 +53,6 @@ jobs:
     name: Terraform Provider Acceptance Tests
     needs: build
     runs-on: ubuntu-latest
-    environment: acceptance-tests
     timeout-minutes: 15
     strategy:
       fail-fast: false
