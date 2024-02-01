@@ -1,5 +1,7 @@
 # Momento Terraform Provider
 
+A terraform provider to manage [Momento](https://www.gomomento.com/) resources.
+
 ## Usage
 
 ```hcl

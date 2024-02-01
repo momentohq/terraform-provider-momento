@@ -8,7 +8,7 @@ description: |-
 
 ![logo](https://docs.momentohq.com/img/momento-logo-forest.svg)
 
-The terraform provider to manage [Momento](https://www.gomomento.com/) resources.
+A terraform provider to manage [Momento](https://www.gomomento.com/) resources.
 
 ## Example Usage
 
