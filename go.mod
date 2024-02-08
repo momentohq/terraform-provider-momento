@@ -7,7 +7,7 @@ require (
 	github.com/hashicorp/terraform-plugin-framework v1.5.0
 	github.com/hashicorp/terraform-plugin-go v0.21.0
 	github.com/hashicorp/terraform-plugin-testing v1.6.0
-	github.com/momentohq/client-sdk-go v1.14.1
+	github.com/momentohq/client-sdk-go v1.15.0
 )
 
 require (
