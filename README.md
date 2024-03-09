@@ -66,4 +66,5 @@ Typically the path will be a place like `~/go/bin`.
 ### Commands
 
 - `make testacc` - Run the acceptance tests
+- `make lint` - Run the linter
 - `go generate` - Generate documentation
