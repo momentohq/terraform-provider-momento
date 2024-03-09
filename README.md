@@ -2,6 +2,8 @@
 
 A terraform provider to manage [Momento](https://www.gomomento.com/) resources.
 
+Full documentation for the provider can be found on the Terraform registry [here](https://registry.terraform.io/providers/Chriscbr/momento/latest/docs).
+
 ## Usage
 
 ```hcl
