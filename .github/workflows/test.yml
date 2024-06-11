@@ -10,12 +10,6 @@ on:
       - 'README.template.md'
       - 'CONTRIBUTING.md'
       - 'CONTRIBUTING.template.md'
-  push:
-    paths-ignore:
-      - 'README.md'
-      - 'README.template.md'
-      - 'CONTRIBUTING.md'
-      - 'CONTRIBUTING.template.md'
 
 # Testing only needs permissions to read the repository contents.
 permissions:
