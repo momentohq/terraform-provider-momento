@@ -5,6 +5,10 @@ default: testacc
 testacc:
 	TF_ACC=1 go test ./... -v $(TESTARGS) -timeout 120m
 
-.PHONE: lint
+.PHONY: lint
 lint:
 	golangci-lint run
+
+.PHONY: docs
+docs:
+	go generate
