@@ -8,35 +8,44 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
-func TestAccCacheResource(t *testing.T) {
-	rName1 := acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum)
-	rName2 := acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum)
+func TestCreateCacheResource(t *testing.T) {
+	cacheName1 := "terraform-provider-momento-test-" + acctest.RandString(8)
+	cacheName2 := "terraform-provider-momento-test-" + acctest.RandString(8)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Each TestStep represents one `terraform apply`
 		Steps: []resource.TestStep{
-			// Create and Read testing
+			// Create and Read one cache
 			{
-				Config: testAccCacheResourceConfig(rName1),
+				Config: testAccCacheResourceConfig(cacheName1),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_cache.test", "name", rName1),
-					resource.TestCheckResourceAttr("momento_cache.test", "id", rName1),
+					resource.TestCheckResourceAttr("momento_cache.test", "name", cacheName1),
+					resource.TestCheckResourceAttr("momento_cache.test", "id", cacheName1),
 				),
 			},
-			// ImportState testing
+			// Creating a cache should be idempotent (no new cache should be created on this second call)
+			{
+				Config: testAccCacheResourceConfig(cacheName1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_cache.test", "name", cacheName1),
+					resource.TestCheckResourceAttr("momento_cache.test", "id", cacheName1),
+				),
+			},
+			// Updating the config with new cache name should destroy the old cache and create a new one
+			{
+				Config: testAccCacheResourceConfig(cacheName2),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_cache.test", "name", cacheName2),
+					resource.TestCheckResourceAttr("momento_cache.test", "id", cacheName2),
+				),
+			},
+			// Test ImportState method (imports existing resources)
 			{
 				ResourceName:      "momento_cache.test",
 				ImportState:       true,
 				ImportStateVerify: true,
-			},
-			// Update and Read testing
-			{
-				Config: testAccCacheResourceConfig(rName2),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_cache.test", "name", rName2),
-					resource.TestCheckResourceAttr("momento_cache.test", "id", rName2),
-				),
 			},
 			// Delete testing automatically occurs in TestCase
 		},

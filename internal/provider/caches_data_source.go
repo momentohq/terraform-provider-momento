@@ -125,23 +125,16 @@ func (d *CachesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 
 func listCaches(ctx context.Context, client momento.CacheClient) ([]string, error) {
 	var caches []string
-	token := ""
-	for {
-		resp, err := client.ListCaches(ctx, &momento.ListCachesRequest{NextToken: token})
-		if err != nil {
-			return nil, err
+	resp, err := client.ListCaches(ctx, &momento.ListCachesRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if r, ok := resp.(*responses.ListCachesSuccess); ok {
+		for _, cacheInfo := range r.Caches() {
+			caches = append(caches, cacheInfo.Name())
 		}
-		if r, ok := resp.(*responses.ListCachesSuccess); ok {
-			for _, cacheInfo := range r.Caches() {
-				caches = append(caches, cacheInfo.Name())
-			}
-			token = r.NextToken()
-			if token == "" {
-				break
-			}
-		} else {
-			return nil, fmt.Errorf("unexpected response type %T", resp)
-		}
+	} else {
+		return nil, fmt.Errorf("unexpected response type %T", resp)
 	}
 	return caches, nil
 }
