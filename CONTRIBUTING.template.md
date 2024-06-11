@@ -47,7 +47,7 @@ To develop and test the Terraform provider locally,
 
 5. To test out the provider, you can create a `main.tf` file with the following contents:
 
-    ```
+    ```hcl
     terraform {
       required_providers {
         momento = {
