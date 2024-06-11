@@ -25,3 +25,12 @@ jobs:
           project_type: other
           template_file: ./README.template.md
           output_file: ./README.md
+
+      - name: Verify CONTRIBUTING generation
+        uses: momentohq/standards-and-practices/github-actions/oss-readme-template@gh-actions-v2
+        with:
+          project_status: official
+          project_stability: alpha
+          project_type: other
+          template_file: CONTRIBUTING.template.md
+          output_file: ./CONTRIBUTING.md
