@@ -21,12 +21,12 @@ terraform {
 }
 
 provider "momento" {
-  auth_token = var.auth_token
+  api_key = var.api_key
 }
 ```
 
 The provider can use an authentication token (API key) from Momento.
-It can be provided through the configuration block, or through the `MOMENTO_AUTH_TOKEN` environment variable.
+It can be provided through the configuration block, or through the `MOMENTO_API_KEY` environment variable.
 
 ### Creating a cache
 
