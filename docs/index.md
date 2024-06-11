@@ -15,7 +15,7 @@ A terraform provider to manage [Momento](https://www.gomomento.com/) resources.
 ```terraform
 # Configuration-based authentication
 provider "momento" {
-  auth_token = "my-token"
+  api_key = "my-token"
 }
 ```
 
@@ -24,6 +24,6 @@ provider "momento" {
 
 ### Optional
 
-- `auth_token` (String) Momento API key. May also be provided via MOMENTO_AUTH_TOKEN environment variable.
+- `api_key` (String) Momento API Key. May also be provided via MOMENTO_API_KEY environment variable.
 
 

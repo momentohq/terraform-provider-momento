@@ -28,7 +28,7 @@ type MomentoProvider struct {
 
 // MomentoProviderModel describes the provider data model.
 type MomentoProviderModel struct {
-	AuthToken types.String `tfsdk:"auth_token"`
+	AuthToken types.String `tfsdk:"api_key"`
 }
 
 func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -39,8 +39,8 @@ func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataReq
 func (p *MomentoProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"auth_token": schema.StringAttribute{
-				MarkdownDescription: "Momento API key. May also be provided via MOMENTO_AUTH_TOKEN environment variable.",
+			"api_key": schema.StringAttribute{
+				MarkdownDescription: "Momento API Key. May also be provided via MOMENTO_API_KEY environment variable.",
 				Optional:            true,
 			},
 		},
@@ -58,10 +58,10 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	if model.AuthToken.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("auth_token"),
-			"Unknown Momento Auth Token",
+			path.Root("api_key"),
+			"Unknown Momento API Key",
 			"The provider cannot create the Momento API client as there is an unknown configuration value for the Momento authentication token. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the MOMENTO_AUTH_TOKEN environment variable.",
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the MOMENTO_API_KEY environment variable.",
 		)
 	}
 
@@ -74,7 +74,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Default values to environment variables, but override
 	// with Terraform configuration value if set.
 
-	authToken := os.Getenv("MOMENTO_AUTH_TOKEN")
+	authToken := os.Getenv("MOMENTO_API_KEY")
 
 	if !model.AuthToken.IsNull() {
 		authToken = model.AuthToken.ValueString()
@@ -85,10 +85,10 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	if authToken == "" {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("auth_token"),
-			"Missing Momento Auth Token",
+			path.Root("api_key"),
+			"Missing Momento API Key",
 			"The provider cannot create the Momento API client as there is a missing or empty value for the Momento authentication token. "+
-				"Set the auth_token value in the configuration or use the MOMENTO_AUTH_TOKEN environment variable. "+
+				"Set the api_key value in the configuration or use the MOMENTO_API_KEY environment variable. "+
 				"If either is already set, ensure the value is not empty.",
 		)
 	}

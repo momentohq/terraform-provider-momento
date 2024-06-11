@@ -1,4 +1,4 @@
 # Configuration-based authentication
 provider "momento" {
-  auth_token = "my-token"
+  api_key = "my-token"
 }

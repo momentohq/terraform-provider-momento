@@ -77,6 +77,6 @@
 #       - run: go mod download
 #       - env:
 #           TF_ACC: "1"
-#           MOMENTO_AUTH_TOKEN: ${{ secrets.MOMENTO_AUTH_TOKEN }}
+#           MOMENTO_API_KEY: ${{ secrets.MOMENTO_API_KEY }}
 #         run: go test -v -cover ./internal/provider/
 #         timeout-minutes: 10
