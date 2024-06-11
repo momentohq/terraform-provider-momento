@@ -67,7 +67,7 @@ To develop and test the Terraform provider locally,
     }
     ```
 
-    Remember to provide the optional `auth_token` argument in the `provider` block, or set the `MOMENTO_AUTH_TOKEN` environment variable before running the provider.
+    Remember to provide the optional `api_key` argument in the `provider` block, or set the `MOMENTO_API_KEY` environment variable before running the provider.
 
     To test locally, skip `terraform init` and just use `terraform apply`.
     Terraform provides this warning otherwise: "Skip terraform init when using provider development overrides. It is not necessary and may error unexpectedly."
