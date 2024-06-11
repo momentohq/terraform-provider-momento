@@ -1,4 +1,4 @@
-module github.com/Chriscbr/terraform-provider-momento
+module github.com/momentohq/terraform-provider-momento
 
 go 1.21
 

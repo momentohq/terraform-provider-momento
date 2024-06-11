@@ -5,8 +5,8 @@ import (
 	"flag"
 	"log"
 
-	"github.com/Chriscbr/terraform-provider-momento/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/momentohq/terraform-provider-momento/internal/provider"
 )
 
 // Run "go generate" to format example terraform files and generate the docs for the registry/website
@@ -35,7 +35,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/Chriscbr/momento",
+		Address: "registry.terraform.io/momentohq/momento",
 		Debug:   debug,
 	}
 
