@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 )
 
 func TestCreateCacheResource(t *testing.T) {
@@ -20,6 +21,11 @@ func TestCreateCacheResource(t *testing.T) {
 			// Create and Read one cache
 			{
 				Config: testAccCacheResourceConfig(cacheName1),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_cache.test", "Create"),
+					},
+				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_cache.test", "name", cacheName1),
 					resource.TestCheckResourceAttr("momento_cache.test", "id", cacheName1),
@@ -28,6 +34,11 @@ func TestCreateCacheResource(t *testing.T) {
 			// Creating a cache should be idempotent (no new cache should be created on this second call)
 			{
 				Config: testAccCacheResourceConfig(cacheName1),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_cache.test", "NoOp"),
+					},
+				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_cache.test", "name", cacheName1),
 					resource.TestCheckResourceAttr("momento_cache.test", "id", cacheName1),
@@ -36,6 +47,11 @@ func TestCreateCacheResource(t *testing.T) {
 			// Updating the config with new cache name should destroy the old cache and create a new one
 			{
 				Config: testAccCacheResourceConfig(cacheName2),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_cache.test", "DestroyBeforeCreate"),
+					},
+				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_cache.test", "name", cacheName2),
 					resource.TestCheckResourceAttr("momento_cache.test", "id", cacheName2),
