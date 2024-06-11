@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   readme:
     runs-on: ubuntu-24.04
@@ -29,3 +33,21 @@ jobs:
           project_type: other
           template_file: ./CONTRIBUTING.template.md
           output_file: ./CONTRIBUTING.md
+
+  publish:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: google-github-actions/release-please-action@v3
+        name: Release Please
+        id: release
+        with:
+          token: ${{ secrets.MOMENTO_MACHINE_USER_GITHUB_TOKEN }}
+          release-type: simple
+          package-name: terraform-provider-momento
+          changelog-types: '[{"type":"feat","section":"Features","hidden":false},{"type":"fix","section":"Bug Fixes","hidden":false},{"type":"chore","section":"Miscellaneous","hidden":false}]'
+
+      - name: Publish
+        run: |
+          echo "Published version: ${{ steps.release.outputs.tag_name }}"
+        if: ${{ steps.release.outputs.release_created }}
