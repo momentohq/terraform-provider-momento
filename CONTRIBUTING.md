@@ -21,6 +21,12 @@ If you want to submit a change, please [submit a pull request to our project](ht
 - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5
 - [Go](https://go.dev/) >= 1.19
 
+## First-time setup :wrench:
+
+To make development easier, we provide a [Makefile](https://golangdocs.com/makefiles-golang) to do common development tasks. If you're on Windows, you can get `make` by installing [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/) (WSL).
+
+Install [golangci-lint](https://golangci-lint.run/welcome/install/) to be able to run `make lint`.
+
 ## Developing :computer:
 
 To develop and test the Terraform provider locally, 
@@ -74,7 +80,15 @@ To develop and test the Terraform provider locally,
 
 ## Tests :zap:
 
-TODO
+You can use either of these commands to run the acceptance tests locally:
+
+```shell
+make testacc
+
+TF_ACC=1 go test -v -cover ./internal/provider/
+```
+
+Just make sure the `MOMENTO_API_KEY` environment variable is set.
 
 ----------------------------------------------------------------------------------------
 For more info, visit our website at [https://gomomento.com](https://gomomento.com)!
