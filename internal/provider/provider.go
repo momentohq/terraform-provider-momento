@@ -102,7 +102,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	credProvider, err := auth.NewStringMomentoTokenProvider(authToken)
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Unable to Create Momento Token Provider",
+			"Unable to Create Momento Credential Provider",
 			"An unexpected error occurred when creating the Momento API client. "+
 				"If the error is not clear, please contact the provider developers.\n\n"+
 				"Momento Client Error: "+err.Error(),
@@ -121,7 +121,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	// Make the HashiCups client available during DataSource and Resource
+	// Make the Momento client available during DataSource and Resource
 	// type Configure methods.
 	resp.DataSourceData = client
 	resp.ResourceData = client

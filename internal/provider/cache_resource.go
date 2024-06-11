@@ -201,25 +201,18 @@ func (r *CacheResource) ImportState(ctx context.Context, req resource.ImportStat
 }
 
 func findCache(ctx context.Context, client momento.CacheClient, name string) (bool, error) {
-	token := ""
-	for {
-		resp, err := client.ListCaches(ctx, &momento.ListCachesRequest{NextToken: token})
-		if err != nil {
-			return false, err
-		}
-		if r, ok := resp.(*responses.ListCachesSuccess); ok {
-			for _, cacheInfo := range r.Caches() {
-				if cacheInfo.Name() == name {
-					return true, nil
-				}
+	resp, err := client.ListCaches(ctx, &momento.ListCachesRequest{})
+	if err != nil {
+		return false, err
+	}
+	if r, ok := resp.(*responses.ListCachesSuccess); ok {
+		for _, cacheInfo := range r.Caches() {
+			if cacheInfo.Name() == name {
+				return true, nil
 			}
-			token = r.NextToken()
-			if token == "" {
-				break
-			}
-		} else {
-			return false, fmt.Errorf("unexpected response type %T", resp)
 		}
+	} else {
+		return false, fmt.Errorf("unexpected response type %T", resp)
 	}
 	return false, nil
 }
