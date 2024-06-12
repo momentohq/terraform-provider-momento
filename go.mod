@@ -2,8 +2,6 @@ module github.com/momentohq/terraform-provider-momento
 
 go 1.21
 
-toolchain go1.22.1
-
 require (
 	github.com/hashicorp/terraform-plugin-docs v0.19.4
 	github.com/hashicorp/terraform-plugin-framework v1.9.0
