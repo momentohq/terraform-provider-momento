@@ -29,7 +29,7 @@ To develop and test the Terraform provider locally,
 
 1. Clone the repository
 2. Enter the repository directory
-3. Build the provider using the Go `install` command:
+3. Build the provider by running the Go `install` command at the root of the `terraform-provider-momento` repo:
 
     ```shell
     go install .
