@@ -29,7 +29,7 @@ To develop and test the Terraform provider locally,
 
 1. Clone the repository
 2. Enter the repository directory
-3. Build the provider using the Go `install` command:
+3. Build the provider by running the Go `install` command at the root of the `terraform-provider-momento` repo:
 
     ```shell
     go install .
@@ -37,7 +37,7 @@ To develop and test the Terraform provider locally,
 
     This will build the provider and put the provider binary in the `$GOPATH/bin` directory.
 
-4. Create a `.terraformrc` file in your home directory that contains following configuration:
+4. Create a `.terraformrc` file in your `$HOME` directory that contains following configuration:
 
     ```hcl
     provider_installation {
@@ -73,6 +73,8 @@ To develop and test the Terraform provider locally,
 
     To test locally, skip `terraform init` and just use `terraform apply`.
     Terraform provides this warning otherwise: "Skip terraform init when using provider development overrides. It is not necessary and may error unexpectedly."
+
+    When done, you can clean up resources using `terraform destroy`.
 
 ## Tests :zap:
 

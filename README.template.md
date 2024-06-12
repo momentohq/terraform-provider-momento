@@ -3,8 +3,9 @@
 
 # Momento Terraform Provider
 
-The official Momento Terraform provider to manage [Momento](https://www.gomomento.com/) resources.
+The official Momento Terraform provider to manage [Momento](https://www.gomomento.com/) resources. Currently, the provider only manages the creation, deletion, and listing of Momento caches.
 
+<!-- TODO: update link to point to official Momento provider registry entry -->
 Full documentation for the provider can be found on the Terraform registry [here](https://registry.terraform.io/providers/Chriscbr/momento/latest/docs).
 
 Originally authored by [Chriscbr](https://github.com/Chriscbr).
