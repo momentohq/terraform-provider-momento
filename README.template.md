@@ -7,7 +7,7 @@ The official Momento Terraform provider to manage [Momento](https://www.gomoment
 
 Full documentation for the provider can be found on the Terraform registry [here](https://registry.terraform.io/providers/momentohq/momento/latest/docs).
 
-Originally authored by [Chriscbr](https://github.com/Chriscbr).
+Many thanks to [Chriscbr](https://github.com/Chriscbr) for the original version of this code! :heart: :heart:
 
 ## Usage
 
