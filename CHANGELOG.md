@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.1.0...v0.1.1) (2024-06-13)
+
+
+### Miscellaneous
+
+* update link in readme to point to official provider in registry ([#16](https://github.com/momentohq/terraform-provider-momento/issues/16)) ([354e56e](https://github.com/momentohq/terraform-provider-momento/commit/354e56e0e07ee4f96c855fdee128d4e6afa68f7e))
+* update readme ([#18](https://github.com/momentohq/terraform-provider-momento/issues/18)) ([69333f8](https://github.com/momentohq/terraform-provider-momento/commit/69333f849db8e6f1abf290999976767fd2deabcb))
+
 ## 0.1.0 (2024-06-13)
 
 
