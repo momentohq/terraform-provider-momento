@@ -1,7 +1,7 @@
 ---
 page_title: "Provider: Momento - terraform-provider-momento"
 description: |-
-  The Momento provider is used to manage Momento Caches.
+  The Momento provider is used to manage Momento serverless platform's resources.
 ---
 
 # Momento Provider
@@ -15,7 +15,7 @@ A terraform provider to manage [Momento](https://www.gomomento.com/) resources.
 ```terraform
 # Configuration-based authentication
 provider "momento" {
-  api_key = "my-api-key"
+  api_key = "my-token"
 }
 ```
 
