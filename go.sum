@@ -160,8 +160,8 @@ github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RR
 github.com/mitchellh/reflectwalk v1.0.0/go.mod h1:mSTlrgnPZtwu0c4WaC2kGObEpuNDbx0jmZXqmk4esnw=
 github.com/mitchellh/reflectwalk v1.0.2 h1:G2LzWKi524PWgd3mLHV8Y5k7s6XUvT0Gef6zxSIeXaQ=
 github.com/mitchellh/reflectwalk v1.0.2/go.mod h1:mSTlrgnPZtwu0c4WaC2kGObEpuNDbx0jmZXqmk4esnw=
-github.com/momentohq/client-sdk-go v1.22.0 h1:lgUtzIopuDJwPd7xUD0UrDvfiNQZGS0GLAtHBx9nMDs=
-github.com/momentohq/client-sdk-go v1.22.0/go.mod h1:NB+kwQzksj9AJabAjS+GgcT5H8sUTg+3U93HlRSVh8c=
+github.com/momentohq/client-sdk-go v1.23.0 h1:/Nv8SOn1v8a1rX+IjIacK9JNjrTlNwz+8P/qpEWq0aw=
+github.com/momentohq/client-sdk-go v1.23.0/go.mod h1:NB+kwQzksj9AJabAjS+GgcT5H8sUTg+3U93HlRSVh8c=
 github.com/oklog/run v1.1.0 h1:GEenZ1cK0+q0+wsJew9qUg/DyD8k3JzYsZAi5gYi2mA=
 github.com/oklog/run v1.1.0/go.mod h1:sVPdnTZT1zYwAJeCMu2Th4T21pA3FPOQRfWjQlk7DVU=
 github.com/onsi/ginkgo/v2 v2.8.1 h1:xFTEVwOFa1D/Ty24Ws1npBWkDYEV9BqZrsDxVrVkrrU=
