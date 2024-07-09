@@ -31,6 +31,11 @@ type MomentoProviderModel struct {
 	AuthToken types.String `tfsdk:"api_key"`
 }
 
+type MomentoClients struct {
+	cache       momento.CacheClient
+	leaderboard momento.PreviewLeaderboardClient
+}
+
 func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "momento"
 	resp.Version = p.version
@@ -110,7 +115,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	client, err := momento.NewCacheClient(config.LaptopLatest(), credProvider, 1)
+	cacheClient, err := momento.NewCacheClient(config.LaptopLatest(), credProvider, 1)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Momento Cache Client",
@@ -121,15 +126,33 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
+	leaderboardClient, err := momento.NewPreviewLeaderboardClient(config.LeaderboardDefault(), credProvider)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create Momento Leaderboard Client",
+			"An unexpected error occurred when creating the Momento API client. "+
+				"If the error is not clear, please contact the provider developers.\n\n"+
+				"Momento Client Error: "+err.Error(),
+		)
+		return
+	}
+
 	// Make the Momento client available during DataSource and Resource
 	// type Configure methods.
-	resp.DataSourceData = client
-	resp.ResourceData = client
+	resp.DataSourceData = MomentoClients{
+		cache:       cacheClient,
+		leaderboard: leaderboardClient,
+	}
+	resp.ResourceData = MomentoClients{
+		cache:       cacheClient,
+		leaderboard: leaderboardClient,
+	}
 }
 
 func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewCacheResource,
+		NewLeaderboardResource,
 	}
 }
 

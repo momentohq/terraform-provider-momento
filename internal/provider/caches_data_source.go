@@ -72,7 +72,18 @@ func (d *CachesDataSource) Configure(ctx context.Context, req datasource.Configu
 		return
 	}
 
-	client, ok := req.ProviderData.(momento.CacheClient)
+	clients, ok := req.ProviderData.(MomentoClients)
+
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected momento.CacheClient, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+
+		return
+	}
+
+	client := clients.cache
 
 	if !ok {
 		resp.Diagnostics.AddError(
