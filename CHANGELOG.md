@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.1.0...v0.2.0) (2024-07-19)
+
+
+### Features
+
+* **leaderboard:** adding leaderboard ([#23](https://github.com/momentohq/terraform-provider-momento/issues/23)) ([d702cd8](https://github.com/momentohq/terraform-provider-momento/commit/d702cd8992b7e60d0d13be667414878c2140234b))
+
+
+### Miscellaneous
+
+* update link in readme to point to official provider in registry ([#16](https://github.com/momentohq/terraform-provider-momento/issues/16)) ([354e56e](https://github.com/momentohq/terraform-provider-momento/commit/354e56e0e07ee4f96c855fdee128d4e6afa68f7e))
+* update readme ([#18](https://github.com/momentohq/terraform-provider-momento/issues/18)) ([69333f8](https://github.com/momentohq/terraform-provider-momento/commit/69333f849db8e6f1abf290999976767fd2deabcb))
+
 ## 0.1.0 (2024-06-13)
 
 
