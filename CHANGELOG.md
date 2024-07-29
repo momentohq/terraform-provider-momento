@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.1...v0.2.2) (2024-07-29)
+
+
+### Miscellaneous
+
+* **deps:** bump github.com/hashicorp/terraform-plugin-framework ([#24](https://github.com/momentohq/terraform-provider-momento/issues/24)) ([3a630d4](https://github.com/momentohq/terraform-provider-momento/commit/3a630d47033ca1bbfc879daa44c4da7e13d82a0b))
+* **deps:** bump github.com/hashicorp/terraform-plugin-testing ([#25](https://github.com/momentohq/terraform-provider-momento/issues/25)) ([e3f7d8a](https://github.com/momentohq/terraform-provider-momento/commit/e3f7d8a2f91c04f30f3de837654adc80d442dd0e))
+* **deps:** bump github.com/momentohq/client-sdk-go ([#30](https://github.com/momentohq/terraform-provider-momento/issues/30)) ([8ed8e35](https://github.com/momentohq/terraform-provider-momento/commit/8ed8e35980a3dd2ad3a830182af9b2ebdb043a97))
+* update secret name in release workflow file ([#33](https://github.com/momentohq/terraform-provider-momento/issues/33)) ([49c0bad](https://github.com/momentohq/terraform-provider-momento/commit/49c0bad7e5a8f5b4581139469a48d3777cf4a2ba))
+
 ## [0.2.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.0...v0.2.1) (2024-07-29)
 
 
