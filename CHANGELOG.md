@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.0...v0.2.1) (2024-07-29)
+
+
+### Miscellaneous
+
+* update release workflow actions versions ([#31](https://github.com/momentohq/terraform-provider-momento/issues/31)) ([3984b5a](https://github.com/momentohq/terraform-provider-momento/commit/3984b5ab44e7e939019ef5f456b60d9f7c8ef172))
+
 ## [0.2.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.1.0...v0.2.0) (2024-07-19)
 
 
