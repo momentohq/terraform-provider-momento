@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.2...v0.2.3) (2024-12-06)
+
+
+### Miscellaneous
+
+* update license file and CI git diff check ([#54](https://github.com/momentohq/terraform-provider-momento/issues/54)) ([fbbeaa7](https://github.com/momentohq/terraform-provider-momento/commit/fbbeaa7a4f7d1ddff88042cc617ae98a32193beb))
+
 ## [0.2.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.1...v0.2.2) (2024-07-29)
 
 
