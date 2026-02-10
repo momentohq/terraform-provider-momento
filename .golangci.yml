@@ -32,7 +32,7 @@ linters:
   settings:
     misspell:
       ignore-rules:
-        momento
+        - momento
 
 formatters:
   # Enable specific formatter.
