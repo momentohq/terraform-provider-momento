@@ -7,7 +7,7 @@ testacc:
 
 .PHONY: lint
 lint:
-	golangci-lint run
+	golangci-lint cache clean && golangci-lint run -v --concurrency 1
 
 .PHONY: docs
 docs:
