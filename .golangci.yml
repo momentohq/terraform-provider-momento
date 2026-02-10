@@ -31,7 +31,7 @@ linters:
     - govet
   settings:
     misspell:
-      ignore-words:
+      ignore-rules:
         momento
 
 formatters:
