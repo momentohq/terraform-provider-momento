@@ -102,7 +102,7 @@ func (l *LeaderboardResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	// Create new Leaderboard
-	var client momento.PreviewLeaderboardClient = *l.client
+	client := *l.client
 	_, err := client.Leaderboard(ctx, &momento.LeaderboardRequest{
 		LeaderboardName: plan.Name.ValueString(),
 		CacheName:       plan.CacheName.ValueString(),
@@ -130,7 +130,7 @@ func (l *LeaderboardResource) Delete(ctx context.Context, req resource.DeleteReq
 	}
 
 	// Close the Leaderboard
-	var client momento.PreviewLeaderboardClient = *l.client
+	client := *l.client
 	client.Close()
 }
 

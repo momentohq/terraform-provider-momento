@@ -97,7 +97,7 @@ func (r *CacheResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	// Create new cache
-	var client momento.CacheClient = *r.client
+	client := *r.client
 	createResp, err := client.CreateCache(ctx, &momento.CreateCacheRequest{
 		CacheName: plan.Name.ValueString(),
 	})
@@ -135,7 +135,7 @@ func (r *CacheResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Find cache
-	var client momento.CacheClient = *r.client
+	client := *r.client
 	found, err := findCache(ctx, client, state.Name.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list caches, got error: %s", err))
@@ -180,7 +180,7 @@ func (r *CacheResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	}
 
 	// Delete cache
-	var client momento.CacheClient = *r.client
+	client := *r.client
 	deleteResp, err := client.DeleteCache(ctx, &momento.DeleteCacheRequest{
 		CacheName: state.Name.ValueString(),
 	})

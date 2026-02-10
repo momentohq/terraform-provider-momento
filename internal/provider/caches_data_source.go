@@ -110,7 +110,7 @@ func (d *CachesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	var caches []string
 
 	// Retrieve data from the API
-	var client momento.CacheClient = *d.client
+	client := *d.client
 	caches, err := listCaches(ctx, client)
 	if err != nil {
 		resp.Diagnostics.AddError(
