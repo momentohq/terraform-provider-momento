@@ -174,8 +174,6 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	// TODO: validate the plan to return clear error messages if fields are missing
-
 	client := *r.httpClient
 	putUrl := fmt.Sprintf("%s/cluster/%s", r.httpEndpoint, plan.ClusterName.ValueString())
 
@@ -266,7 +264,6 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	}
 }
 
-// List clusters? or sync one cluster?
 func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state ValkeyClusterResourceModel
 
