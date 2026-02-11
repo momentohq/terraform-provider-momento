@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -363,7 +362,7 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 	if err != nil {
 		return nil, err
 	}
-	if getResp.StatusCode != http.StatusOK {
+	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
 		err = getResp.Body.Close()
 		if err != nil {
@@ -380,7 +379,7 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 	var clusters []ListValkeyClustersResponseData
 	err = json.Unmarshal(bodyBytes, &clusters)
 	if err != nil {
-		log.Fatalf("Error unmarshalling JSON: %v", err)
+		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
 	}
 
 	for _, cluster := range clusters {
