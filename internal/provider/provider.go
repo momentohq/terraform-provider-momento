@@ -230,6 +230,7 @@ func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewCacheResource,
 		NewLeaderboardResource,
 		NewValkeyClusterResource,
+		NewObjectStoreResource,
 	}
 }
 
