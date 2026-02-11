@@ -346,14 +346,14 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 		body, _ := io.ReadAll(getResp.Body)
 		err = getResp.Body.Close()
 		if err != nil {
-			return false, fmt.Errorf("Unable to close HTTP response body, got error: %s", err)
+			return false, fmt.Errorf("unable to close HTTP response body, got error: %s", err)
 		}
 		return false, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
 	}
 
 	bodyBytes, err := io.ReadAll(getResp.Body)
 	if err != nil {
-		return false, fmt.Errorf("Error reading response body: %v", err)
+		return false, fmt.Errorf("error reading response body: %v", err)
 	}
 
 	var clusters []ListValkeyClustersResponseData
