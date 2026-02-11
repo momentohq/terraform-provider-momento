@@ -2,7 +2,10 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -34,8 +37,11 @@ type MomentoProviderModel struct {
 }
 
 type MomentoClients struct {
-	cache       momento.CacheClient
-	leaderboard momento.PreviewLeaderboardClient
+	cache         momento.CacheClient
+	leaderboard   momento.PreviewLeaderboardClient
+	httpClient    *http.Client
+	httpEndpoint  string
+	httpAuthToken string
 }
 
 func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -139,8 +145,10 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Use the appropriate credential provider based on the provided credentials.
 	var credProvider auth.CredentialProvider
 	var credError error
+	var httpAuthToken string
 
 	if endpoint != "" && v2ApiKey != "" {
+		httpAuthToken = v2ApiKey
 		credProvider, credError = auth.FromApiKeyV2(auth.ApiKeyV2Props{ApiKey: v2ApiKey, Endpoint: endpoint})
 		if credError != nil {
 			resp.Diagnostics.AddError(
@@ -162,6 +170,13 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 			)
 			return
 		}
+		httpAuthToken = credProvider.GetAuthToken()
+
+		// extract the base endpoint for http endpoint construction later
+		// remove beginning `cache.` and `:<port number>` if present
+		cacheEndpoint := credProvider.GetCacheEndpoint()
+		withoutPrefix, _ := strings.CutPrefix(cacheEndpoint, "cache.")
+		endpoint, _ = strings.CutSuffix(withoutPrefix, ":443")
 	}
 
 	// Create the Momento API client.
@@ -188,15 +203,25 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
+	// Create an HTTP client for resources that use Momento HTTP APIs
+	httpClient := &http.Client{}
+	httpEndpoint := fmt.Sprintf("https://api.cache.%s", endpoint)
+
 	// Make the Momento client available during DataSource and Resource
 	// type Configure methods.
 	resp.DataSourceData = MomentoClients{
-		cache:       cacheClient,
-		leaderboard: leaderboardClient,
+		cache:         cacheClient,
+		leaderboard:   leaderboardClient,
+		httpClient:    httpClient,
+		httpEndpoint:  httpEndpoint,
+		httpAuthToken: httpAuthToken,
 	}
 	resp.ResourceData = MomentoClients{
-		cache:       cacheClient,
-		leaderboard: leaderboardClient,
+		cache:         cacheClient,
+		leaderboard:   leaderboardClient,
+		httpClient:    httpClient,
+		httpEndpoint:  httpEndpoint,
+		httpAuthToken: httpAuthToken,
 	}
 }
 
@@ -204,6 +229,7 @@ func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		NewCacheResource,
 		NewLeaderboardResource,
+		NewValkeyClusterResource,
 	}
 }
 
