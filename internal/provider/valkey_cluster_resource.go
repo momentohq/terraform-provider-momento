@@ -276,17 +276,41 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 
 	// Find valkey cluster
 	client := *r.httpClient
-	found, err := findValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	foundCluster, err := findValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters, got error: %s", err))
 		return
 	}
-	if !found {
+	if foundCluster == nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read valkey cluster, cluster with name \"%s\" not found", state.ClusterName.ValueString()))
 		return
 	}
 
-	state.Id = types.StringValue(state.ClusterName.ValueString())
+	if len(foundCluster.Errors) > 0 {
+		resp.Diagnostics.AddWarning("Valkey Cluster Error", fmt.Sprintf("Found valkey cluster \"%s\" with errors: %v", foundCluster.Name, foundCluster.Errors))
+	}
+
+	state.Id = types.StringValue(foundCluster.Name)
+	state.ClusterName = types.StringValue(foundCluster.Name)
+	state.Description = types.StringValue(foundCluster.Description)
+	state.NodeInstanceType = types.StringValue(foundCluster.NodeInstanceType)
+	state.ShardCount = types.Int64Value(foundCluster.ShardCount)
+	state.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
+	state.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
+
+	for _, sp := range foundCluster.ShardPlacements {
+		state.ShardPlacements = append(state.ShardPlacements, ShardPlacementModel{
+			Index:            types.Int64Value(sp.ShardIndex),
+			AvailabilityZone: types.StringValue(sp.AvailabilityZone),
+			ReplicaAvailabilityZones: func() []types.String {
+				var replicaAZs []types.String
+				for _, az := range sp.ReplicaAvailabilityZones {
+					replicaAZs = append(replicaAZs, types.StringValue(az))
+				}
+				return replicaAZs
+			}(),
+		})
+	}
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -329,28 +353,28 @@ type ListValkeyClustersResponseData struct {
 	Errors []string `json:"errors"`
 }
 
-func findValkeyCluster(client http.Client, name string, httpEndpoint string, httpAuthToken string) (bool, error) {
+func findValkeyCluster(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ListValkeyClustersResponseData, error) {
 	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/cluster", httpEndpoint), nil)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	getRequest.Header.Set("Authorization", httpAuthToken)
 	getResp, err := client.Do(getRequest)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if getResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(getResp.Body)
 		err = getResp.Body.Close()
 		if err != nil {
-			return false, fmt.Errorf("unable to close HTTP response body, got error: %s", err)
+			return nil, fmt.Errorf("unable to close HTTP response body, got error: %s", err)
 		}
-		return false, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
+		return nil, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
 	}
 
 	bodyBytes, err := io.ReadAll(getResp.Body)
 	if err != nil {
-		return false, fmt.Errorf("error reading response body: %v", err)
+		return nil, fmt.Errorf("error reading response body: %v", err)
 	}
 
 	var clusters []ListValkeyClustersResponseData
@@ -361,9 +385,9 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 
 	for _, cluster := range clusters {
 		if cluster.Name == name {
-			return true, nil
+			return &cluster, nil
 		}
 	}
 
-	return false, nil
+	return nil, nil
 }
