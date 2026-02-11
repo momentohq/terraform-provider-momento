@@ -29,6 +29,8 @@ type MomentoProvider struct {
 // MomentoProviderModel describes the provider data model.
 type MomentoProviderModel struct {
 	AuthToken types.String `tfsdk:"api_key"`
+	V2ApiKey  types.String `tfsdk:"v2_api_key"`
+	Endpoint  types.String `tfsdk:"v2_api_endpoint"`
 }
 
 type MomentoClients struct {
@@ -45,7 +47,15 @@ func (p *MomentoProvider) Schema(ctx context.Context, req provider.SchemaRequest
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{
-				MarkdownDescription: "Momento API Key. May also be provided via MOMENTO_API_KEY environment variable.",
+				MarkdownDescription: "Momento disposable token or legacy API key. May also be provided via MOMENTO_API_KEY environment variable. Do NOT set the MOMENTO_ENDPOINT environment variable if you are using a disposable token or legacy API key.",
+				Optional:            true,
+			},
+			"v2_api_key": schema.StringAttribute{
+				MarkdownDescription: "Momento V2 API Key. May also be provided via MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable.",
+				Optional:            true,
+			},
+			"v2_api_endpoint": schema.StringAttribute{
+				MarkdownDescription: "Momento API Endpoint. May also be provided via MOMENTO_ENDPOINT environment variable alongside the MOMENTO_API_KEY environment variable containing a V2 API key.",
 				Optional:            true,
 			},
 		},
@@ -64,9 +74,27 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	if model.AuthToken.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("api_key"),
-			"Unknown Momento API Key",
-			"The provider cannot create the Momento API client as there is an unknown configuration value for the Momento authentication token. "+
+			"Unknown Momento disposable token or legacy API key value",
+			"The provider cannot create the Momento client as there is an unknown configuration value for the Momento disposable token or legacy API key field. "+
 				"Either target apply the source of the value first, set the value statically in the configuration, or use the MOMENTO_API_KEY environment variable.",
+		)
+	}
+
+	if model.V2ApiKey.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("v2_api_key"),
+			"Unknown Momento V2 API key value",
+			"The provider cannot create the Momento client because there is an unknown configuration value for the Momento V2 API key field. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable.",
+		)
+	}
+
+	if model.Endpoint.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("v2_api_endpoint"),
+			"Unknown Momento V2 API endpoint value",
+			"The provider cannot create the Momento client as there is an unknown configuration value for the Momento V2 API endpoint field. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the MOMENTO_ENDPOINT environment variable alongside the MOMENTO_API_KEY environment variable storing a v2 API key.",
 		)
 	}
 
@@ -80,20 +108,26 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// with Terraform configuration value if set.
 
 	authToken := os.Getenv("MOMENTO_API_KEY")
+	v2ApiKey := os.Getenv("MOMENTO_API_KEY")
+	endpoint := os.Getenv("MOMENTO_ENDPOINT")
 
 	if !model.AuthToken.IsNull() {
 		authToken = model.AuthToken.ValueString()
 	}
+	if !model.V2ApiKey.IsNull() {
+		v2ApiKey = model.V2ApiKey.ValueString()
+	}
+	if !model.Endpoint.IsNull() {
+		endpoint = model.Endpoint.ValueString()
+	}
 
-	// If any of the expected configurations are missing, return
-	// errors with provider-specific guidance.
-
-	if authToken == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("api_key"),
-			"Missing Momento API Key",
-			"The provider cannot create the Momento API client as there is a missing or empty value for the Momento authentication token. "+
-				"Set the api_key value in the configuration or use the MOMENTO_API_KEY environment variable. "+
+	// If endpoint is present, assume we're using v2 api key, so both variables must be set.
+	// Otherwise default to using disposable token or legacy API key.
+	if endpoint != "" && v2ApiKey == "" {
+		resp.Diagnostics.AddError(
+			"Missing Momento V2 API Key",
+			"The provider cannot create the Momento API client as there is a missing or empty value for the Momento V2 API key. "+
+				"Set the v2_api_key value in the configuration or use the MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable. "+
 				"If either is already set, ensure the value is not empty.",
 		)
 	}
@@ -102,18 +136,35 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	// Create the Momento API client.
+	// Use the appropriate credential provider based on the provided credentials.
+	var credProvider auth.CredentialProvider
+	var credError error
 
-	credProvider, err := auth.NewStringMomentoTokenProvider(authToken)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Momento Credential Provider",
-			"An unexpected error occurred when creating the Momento API client. "+
-				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Momento Client Error: "+err.Error(),
-		)
-		return
+	if endpoint != "" && v2ApiKey != "" {
+		credProvider, credError = auth.FromApiKeyV2(auth.ApiKeyV2Props{ApiKey: v2ApiKey, Endpoint: endpoint})
+		if credError != nil {
+			resp.Diagnostics.AddError(
+				"Unable to Create Momento Credential Provider using FromApiKeyV2",
+				"An unexpected error occurred when creating the Momento Credential Provider. "+
+					"If the error is not clear, please contact the provider developers.\n\n"+
+					"Momento Client Error: "+credError.Error(),
+			)
+			return
+		}
+	} else {
+		credProvider, credError = auth.FromDisposableToken(authToken)
+		if credError != nil {
+			resp.Diagnostics.AddError(
+				"Unable to Create Momento Credential Provider using FromDisposableToken",
+				"An unexpected error occurred when creating the Momento Credential Provider. "+
+					"If the error is not clear, please contact the provider developers.\n\n"+
+					"Momento Client Error: "+credError.Error(),
+			)
+			return
+		}
 	}
+
+	// Create the Momento API client.
 
 	cacheClient, err := momento.NewCacheClient(config.LaptopLatest(), credProvider, 1)
 	if err != nil {

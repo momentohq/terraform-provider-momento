@@ -24,6 +24,8 @@ provider "momento" {
 
 ### Optional
 
-- `api_key` (String) Momento API Key. May also be provided via MOMENTO_API_KEY environment variable.
+- `api_key` (String) Momento disposable token or legacy API key. May also be provided via MOMENTO_API_KEY environment variable. Do NOT set the MOMENTO_ENDPOINT environment variable if you are using a disposable token or legacy API key.
+- `v2_api_endpoint` (String) Momento API Endpoint. May also be provided via MOMENTO_ENDPOINT environment variable alongside the MOMENTO_API_KEY environment variable containing a V2 API key.
+- `v2_api_key` (String) Momento V2 API Key. May also be provided via MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable.
 
 

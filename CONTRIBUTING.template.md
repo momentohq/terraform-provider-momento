@@ -42,14 +42,14 @@ To develop and test the Terraform provider locally,
     ```hcl
     provider_installation {
       dev_overrides {
-          "momentohq/momento" = "<path to where Go installs your binaries>"
+          "momentohq/momento" = "<path to this terraform-provider-momento repo>"
       }
       direct {}
     }
     ```
 
-    Typically the path will be a place like `~/go/bin` or `/Users/username/go/bin`.
-    This override means your Terraform commands will use the provider you built instead of downloading one from the Terraform Registry.
+    This override means your Terraform commands will use the provider you built locally using `go build` instead of downloading one from the Terraform Registry.
+    Note: make sure to run `go build` to update the binary between changes.
 
 5. To test out the provider, you can create a `main.tf` file with the following contents:
 
