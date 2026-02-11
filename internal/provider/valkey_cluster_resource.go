@@ -291,11 +291,14 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 
 	state.Id = types.StringValue(foundCluster.Name)
 	state.ClusterName = types.StringValue(foundCluster.Name)
-	state.Description = types.StringValue(foundCluster.Description)
 	state.NodeInstanceType = types.StringValue(foundCluster.NodeInstanceType)
 	state.ShardCount = types.Int64Value(foundCluster.ShardCount)
 	state.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
 	state.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
+
+	if foundCluster.Description != "" {
+		state.Description = types.StringValue(foundCluster.Description)
+	}
 
 	for _, sp := range foundCluster.ShardPlacements {
 		state.ShardPlacements = append(state.ShardPlacements, ShardPlacementModel{
@@ -329,7 +332,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	resp.Diagnostics.AddError("Internal Error", "Valkey Cluster resource does not yet support updates, please delete and recreate the resource to make changes")
+	resp.Diagnostics.AddWarning("Internal Error", "Valkey Cluster resource does not yet support updates, please delete and recreate the resource to make changes")
 }
 
 func (r *ValkeyClusterResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
