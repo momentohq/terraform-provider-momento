@@ -181,7 +181,7 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 
 	shardPlacements := `[]`
 	if len(plan.ShardPlacements) > 0 {
-		shardPlacements := `[`
+		shardPlacements = `[`
 		for _, sp := range plan.ShardPlacements {
 			shardPlacements += fmt.Sprintf(`{
 				"shard_index": %d,
@@ -221,7 +221,10 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	}
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		httpResp.Body.Close()
+		err = httpResp.Body.Close()
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to close HTTP response body, got error: %s", err))
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got non-200 response: %s %s", httpResp.Status, string(body)))
 		return
 	}
@@ -341,8 +344,11 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 	}
 	if getResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(getResp.Body)
-		getResp.Body.Close()
-		return false, fmt.Errorf("Unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
+		err = getResp.Body.Close()
+		if err != nil {
+			return false, fmt.Errorf("Unable to close HTTP response body, got error: %s", err)
+		}
+		return false, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
 	}
 
 	bodyBytes, err := io.ReadAll(getResp.Body)
