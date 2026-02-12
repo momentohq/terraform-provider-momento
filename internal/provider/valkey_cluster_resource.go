@@ -305,6 +305,8 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 		state.Description = types.StringValue(foundCluster.Description)
 	}
 
+	// reset the list of shard placements before repopulating from the response
+	state.ShardPlacements = nil
 	for _, sp := range foundCluster.ShardPlacements {
 		state.ShardPlacements = append(state.ShardPlacements, ShardPlacementModel{
 			Index:            types.Int64Value(sp.ShardIndex),
