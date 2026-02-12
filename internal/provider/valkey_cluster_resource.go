@@ -176,34 +176,39 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	client := *r.httpClient
 	putUrl := fmt.Sprintf("%s/cluster/%s", r.httpEndpoint, plan.ClusterName.ValueString())
 
-	shardPlacements := `[]`
-	if len(plan.ShardPlacements) > 0 {
-		shardPlacements = `[`
-		for _, sp := range plan.ShardPlacements {
-			shardPlacements += fmt.Sprintf(`{
-				"shard_index": %d,
-				"availability_zone": "%s",
-				"replica_availability_zones": [%s]
-			},`, sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString(), func() string {
-				replicaAZs := ``
-				for _, az := range sp.ReplicaAvailabilityZones {
-					replicaAZs += fmt.Sprintf(`"%s",`, az.ValueString())
-				}
-				return replicaAZs
-			}())
-		}
-		shardPlacements += `]`
+	// Create map of request body to marshal into JSON
+
+	requestMap := map[string]interface{}{
+		"description":            plan.Description.ValueString(),
+		"node_instance_type":     plan.NodeInstanceType.ValueString(),
+		"shard_count":            plan.ShardCount.ValueInt64(),
+		"replication_factor":     plan.ReplicationFactor.ValueInt64(),
+		"enforce_shard_multi_az": plan.EnforceShardMultiAz.ValueBool(),
 	}
 
-	requestBody := bytes.NewBuffer([]byte(`{
-  "description": "` + plan.Description.ValueString() + `",
-  "node_instance_type": "` + plan.NodeInstanceType.ValueString() + `",
-  "shard_count": ` + fmt.Sprintf("%d", plan.ShardCount.ValueInt64()) + `,
-  "replication_factor": ` + fmt.Sprintf("%d", plan.ReplicationFactor.ValueInt64()) + `,
-  "enforce_shard_multi_az": ` + fmt.Sprintf("%t", plan.EnforceShardMultiAz.ValueBool()) + `,
-  "shard_placements": ` + shardPlacements + `
-}`))
+	if len(plan.ShardPlacements) > 0 {
+		placements := make([]map[string]interface{}, len(plan.ShardPlacements))
+		for i, sp := range plan.ShardPlacements {
+			replicaAZs := make([]string, len(sp.ReplicaAvailabilityZones))
+			for j, az := range sp.ReplicaAvailabilityZones {
+				replicaAZs[j] = az.ValueString()
+			}
+			placements[i] = map[string]interface{}{
+				"shard_index":                sp.Index.ValueInt64(),
+				"availability_zone":          sp.AvailabilityZone.ValueString(),
+				"replica_availability_zones": replicaAZs,
+			}
+		}
+		requestMap["shard_placements"] = placements
+	}
 
+	requestJson, err := json.Marshal(requestMap)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to marshal request body, got error: %s", err))
+		return
+	}
+
+	requestBody := bytes.NewBuffer(requestJson)
 	putRequest, err := http.NewRequest("PUT", putUrl, requestBody)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to create valkey cluster, got error: %s", err))
