@@ -364,7 +364,9 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 
 	state.Id = types.StringValue(foundObjectStore.Name)
 	state.S3BucketName = types.StringValue(foundObjectStore.StorageConfig.S3.BucketName)
-	state.S3Prefix = types.StringValue(foundObjectStore.StorageConfig.S3.Prefix)
+	if foundObjectStore.StorageConfig.S3.Prefix != "" {
+		state.S3Prefix = types.StringValue(foundObjectStore.StorageConfig.S3.Prefix)
+	}
 	state.S3IamRoleArn = types.StringValue(foundObjectStore.StorageConfig.S3.IamRoleArn)
 	state.ValkeyClusterName = types.StringValue(foundObjectStore.CacheConfig.ValkeyCluster.ClusterName)
 	if foundObjectStore.AccessLoggingConfig.Cloudwatch.LogGroupName != "" {
