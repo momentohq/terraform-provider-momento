@@ -222,32 +222,63 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 
 	client := *r.httpClient
 
-	requestJson := `{
-  "storage_config": {
-    "s3": {
-      "bucket_name": "` + plan.S3BucketName.ValueString() + `",
-      "prefix": "` + plan.S3Prefix.ValueString() + `",
-      "iam_role_arn": "` + plan.S3IamRoleArn.ValueString() + `"
-    }
-  },
-  "cache_config": {
-    "valkey_cluster": {
-      "cluster_name": "` + plan.ValkeyClusterName.ValueString() + `"
-    }
-  }`
-	if plan.AccessLoggingConfig != nil {
-		accessLoggingConfig := `"access_logging_config": {
-			"cloudwatch": {
-				"log_group_name": "` + plan.AccessLoggingConfig.LogGroupName.ValueString() + `",
-				"iam_role_arn": "` + plan.AccessLoggingConfig.IamRoleArn.ValueString() + `",
-				"region": "` + plan.AccessLoggingConfig.Region.ValueString() + `"
-			}
-		}`
-		requestJson += ",\n" + accessLoggingConfig + "\n}"
-	} else {
-		requestJson += "\n}"
+	// Create map of request body to marshal into JSON
+	requestData := DescribeObjectStoresResponseData{
+		Name: plan.Name.ValueString(),
+		StorageConfig: struct {
+			S3 struct {
+				BucketName string `json:"bucket_name"`
+				Prefix     string `json:"prefix"`
+				IamRoleArn string `json:"iam_role_arn"`
+			} `json:"s3"`
+		}{
+			S3: struct {
+				BucketName string `json:"bucket_name"`
+				Prefix     string `json:"prefix"`
+				IamRoleArn string `json:"iam_role_arn"`
+			}{
+				BucketName: plan.S3BucketName.ValueString(),
+				Prefix:     plan.S3Prefix.ValueString(),
+				IamRoleArn: plan.S3IamRoleArn.ValueString(),
+			},
+		},
+		CacheConfig: struct {
+			ValkeyCluster struct {
+				ClusterName string `json:"cluster_name"`
+			} `json:"valkey_cluster"`
+		}{
+			ValkeyCluster: struct {
+				ClusterName string `json:"cluster_name"`
+			}{
+				ClusterName: plan.ValkeyClusterName.ValueString(),
+			},
+		},
 	}
-	requestBody := bytes.NewBuffer([]byte(requestJson))
+	if plan.AccessLoggingConfig != nil {
+		requestData.AccessLoggingConfig = struct {
+			Cloudwatch struct {
+				LogGroupName string `json:"log_group_name"`
+				IamRoleArn   string `json:"iam_role_arn"`
+				Region       string `json:"region"`
+			} `json:"cloudwatch"`
+		}{
+			Cloudwatch: struct {
+				LogGroupName string `json:"log_group_name"`
+				IamRoleArn   string `json:"iam_role_arn"`
+				Region       string `json:"region"`
+			}{
+				LogGroupName: plan.AccessLoggingConfig.LogGroupName.ValueString(),
+				IamRoleArn:   plan.AccessLoggingConfig.IamRoleArn.ValueString(),
+				Region:       plan.AccessLoggingConfig.Region.ValueString(),
+			},
+		}
+	}
+	requestJson, err := json.Marshal(requestData)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+		return
+	}
+	requestBody := bytes.NewBuffer(requestJson)
 
 	putUrl := fmt.Sprintf("%s/objectstore/%s", r.httpEndpoint, plan.Name.ValueString())
 	putRequest, err := http.NewRequest("PUT", putUrl, requestBody)
