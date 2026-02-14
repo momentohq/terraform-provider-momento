@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.3.0...v0.3.1) (2026-02-14)
+
+
+### Miscellaneous
+
+* release 0.3.1 ([#59](https://github.com/momentohq/terraform-provider-momento/issues/59)) ([a5fe387](https://github.com/momentohq/terraform-provider-momento/commit/a5fe3878526fac374ebf1cd12ea69c912f4d6748))
+
 ## [0.3.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.2...v0.3.0) (2026-02-14)
 
 
