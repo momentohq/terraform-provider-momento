@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.2...v0.3.0) (2026-02-14)
+
+
+### Features
+
+* add support for authenticating with v2 api keys ([#56](https://github.com/momentohq/terraform-provider-momento/issues/56)) ([057c274](https://github.com/momentohq/terraform-provider-momento/commit/057c27420708f054c4997403acdda2a1dac76317))
+* support object store control plane commands ([#58](https://github.com/momentohq/terraform-provider-momento/issues/58)) ([05fa54e](https://github.com/momentohq/terraform-provider-momento/commit/05fa54e058e785c86b8ec6037a0349df5608e710))
+* support valkey cluster control plane commands ([#57](https://github.com/momentohq/terraform-provider-momento/issues/57)) ([a9cc05c](https://github.com/momentohq/terraform-provider-momento/commit/a9cc05c54dfd0b4cd2e619443fd494190f463704))
+
+
+### Miscellaneous
+
+* update license file and CI git diff check ([#54](https://github.com/momentohq/terraform-provider-momento/issues/54)) ([fbbeaa7](https://github.com/momentohq/terraform-provider-momento/commit/fbbeaa7a4f7d1ddff88042cc617ae98a32193beb))
+
 ## [0.2.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.2.1...v0.2.2) (2024-07-29)
 
 
