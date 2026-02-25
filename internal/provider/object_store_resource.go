@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -177,7 +178,7 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 		)
 		return
 	}
-	if plan.S3IamRoleArn.IsNull() || plan.S3IamRoleArn.IsUnknown() || plan.S3IamRoleArn.ValueString() == "" {
+	if plan.S3IamRoleArn.IsNull() || plan.S3IamRoleArn.IsUnknown() || plan.S3IamRoleArn.ValueString() == "" || len(plan.S3IamRoleArn.ValueString()) < 20 || !strings.HasPrefix(plan.S3IamRoleArn.ValueString(), "arn:aws:") {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("s3_iam_role_arn"),
 			"Missing required value",
@@ -202,7 +203,7 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			)
 			return
 		}
-		if plan.AccessLoggingConfig.IamRoleArn.IsNull() || plan.AccessLoggingConfig.IamRoleArn.IsUnknown() || plan.AccessLoggingConfig.IamRoleArn.ValueString() == "" {
+		if plan.AccessLoggingConfig.IamRoleArn.IsNull() || plan.AccessLoggingConfig.IamRoleArn.IsUnknown() || plan.AccessLoggingConfig.IamRoleArn.ValueString() == "" || len(plan.AccessLoggingConfig.IamRoleArn.ValueString()) < 20 || !strings.HasPrefix(plan.AccessLoggingConfig.IamRoleArn.ValueString(), "arn:aws:") {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("access_logging_config").AtName("iam_role_arn"),
 				"Missing required value",

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -236,6 +237,30 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+
+	// Poll until cluster status is "Active"
+	foundCluster, err := findValkeyCluster(client, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters to confirm creation, got error: %s", err))
+		return
+	}
+	if foundCluster == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Cluster with name \"%s\" not found", plan.ClusterName.ValueString()))
+		return
+	}
+	for foundCluster.Status != "Active" {
+		// wait 1 minute
+		time.Sleep(1 * time.Minute)
+		foundCluster, err = findValkeyCluster(client, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters to confirm creation, got error: %s", err))
+			return
+		}
+		if foundCluster == nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Cluster with name \"%s\" not found", plan.ClusterName.ValueString()))
+			return
+		}
+	}
 }
 
 func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -265,6 +290,28 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	if httpResp.StatusCode >= 300 {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete valkey cluster, got non-200 response: %d", httpResp.StatusCode))
 		return
+	}
+
+	// Poll until cluster is deleted (no longer returned by list clusters call)
+	foundCluster, err := findValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters to confirm deletion, got error: %s", err))
+		return
+	}
+	if foundCluster == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Cluster with name \"%s\" not found, unable to poll until confirmed deletion", state.ClusterName.ValueString()))
+		return
+	}
+	for foundCluster != nil {
+		time.Sleep(1 * time.Minute)
+		foundCluster, err = findValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters to confirm deletion, got error: %s", err))
+			return
+		}
+		if foundCluster == nil {
+			return
+		}
 	}
 }
 
