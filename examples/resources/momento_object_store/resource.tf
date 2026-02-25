@@ -7,7 +7,7 @@ resource "momento_valkey_cluster" "example" {
   shard_count            = 1
 }
 
-# Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix and access_logging_config) specified.
+# Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix, access_logging_config, and metrics_config) specified.
 # Waits for the valkey cluster to be created first if creating both for the first time.
 resource "momento_object_store" "example" {
   name                = "object-store-name"
@@ -19,6 +19,10 @@ resource "momento_object_store" "example" {
     iam_role_arn   = "cloudwatch-iam-role-arn"
     log_group_name = "log-group-name"
     region         = "us-west-2"
+  }
+  metrics_config = {
+    iam_role_arn = "metrics-iam-role-arn"
+    region       = "us-west-2"
   }
   # Explicit dependency: Forces object store creation to wait for cluster creation
   depends_on = [
