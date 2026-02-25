@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.3.2...v0.4.0) (2026-02-25)
+
+
+### Features
+
+* add optional metrics_config to create object store and support object store updates ([#63](https://github.com/momentohq/terraform-provider-momento/issues/63)) ([ed44a7b](https://github.com/momentohq/terraform-provider-momento/commit/ed44a7b431fc664cf05bd305229dd16e3a267522))
+
 ## [0.3.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.3.1...v0.3.2) (2026-02-25)
 
 
