@@ -41,6 +41,11 @@ type AccessLoggingConfig struct {
 	LogGroupName types.String `tfsdk:"log_group_name"`
 }
 
+type MetricsConfig struct {
+	Region     types.String `tfsdk:"region"`
+	IamRoleArn types.String `tfsdk:"iam_role_arn"`
+}
+
 // ObjectStoreResourceModel describes the resource data model.
 type ObjectStoreResourceModel struct {
 	Id                  types.String         `tfsdk:"id"`
@@ -50,6 +55,7 @@ type ObjectStoreResourceModel struct {
 	S3IamRoleArn        types.String         `tfsdk:"s3_iam_role_arn"`
 	ValkeyClusterName   types.String         `tfsdk:"valkey_cluster_name"`
 	AccessLoggingConfig *AccessLoggingConfig `tfsdk:"access_logging_config"`
+	MetricsConfig       *MetricsConfig       `tfsdk:"metrics_config"`
 }
 
 func (r *ObjectStoreResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -80,14 +86,14 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "Name of the S3 bucket for the Object Store.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"s3_prefix": schema.StringAttribute{
 				MarkdownDescription: "Optional prefix path within the S3 bucket.",
 				Optional:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"s3_iam_role_arn": schema.StringAttribute{
@@ -101,7 +107,7 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "The name of the Momento Valkey Cluster to use for automatic caching.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"access_logging_config": schema.SingleNestedAttribute{
@@ -121,6 +127,23 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 					},
 					"log_group_name": schema.StringAttribute{
 						MarkdownDescription: "The CloudWatch Log Group name where access logs will be delivered. The log group must already exist.",
+						Required:            true,
+					},
+				},
+			},
+			"metrics_config": schema.SingleNestedAttribute{
+				MarkdownDescription: "Optional configuration for exporting CloudWatch metrics.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.Object{
+					objectplanmodifier.UseStateForUnknown(),
+				},
+				Attributes: map[string]schema.Attribute{
+					"region": schema.StringAttribute{
+						MarkdownDescription: "The AWS region where the metrics will be exported to.",
+						Required:            true,
+					},
+					"iam_role_arn": schema.StringAttribute{
+						MarkdownDescription: "The ARN of the IAM role that Momento will assume to export metrics.",
 						Required:            true,
 					},
 				},
@@ -151,79 +174,84 @@ func (r *ObjectStoreResource) Configure(ctx context.Context, req resource.Config
 	r.httpAuthToken = clients.httpAuthToken
 }
 
-func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan ObjectStoreResourceModel
+type AttributeError struct {
+	AttributePath path.Path
+	Summary       string
+	Detail        string
+}
 
-	// Retrieve values from the plan
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// If required fields are missing values, return error
+func validateCreateObjectStoreTerraformPlan(plan *ObjectStoreResourceModel) *AttributeError {
 	if plan.Name.IsNull() || plan.Name.IsUnknown() || plan.Name.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("name"),
-			"Missing required value",
-			"The Object Store name is required.",
-		)
-		return
+		return &AttributeError{
+			AttributePath: path.Root("name"),
+			Summary:       "Missing required value",
+			Detail:        "The Object Store name is required.",
+		}
 	}
 	if plan.S3BucketName.IsNull() || plan.S3BucketName.IsUnknown() || plan.S3BucketName.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("s3_bucket_name"),
-			"Missing required value",
-			"The S3 bucket name is required.",
-		)
-		return
+		return &AttributeError{
+			AttributePath: path.Root("s3_bucket_name"),
+			Summary:       "Missing required value",
+			Detail:        "The S3 bucket name is required.",
+		}
 	}
 	if plan.S3IamRoleArn.IsNull() || plan.S3IamRoleArn.IsUnknown() || plan.S3IamRoleArn.ValueString() == "" || len(plan.S3IamRoleArn.ValueString()) < 20 || !strings.HasPrefix(plan.S3IamRoleArn.ValueString(), "arn:aws:") {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("s3_iam_role_arn"),
-			"Missing required value",
-			"The S3 IAM Role ARN is required.",
-		)
-		return
+		return &AttributeError{
+			AttributePath: path.Root("s3_iam_role_arn"),
+			Summary:       "Missing required value",
+			Detail:        "The S3 IAM Role ARN is required.",
+		}
 	}
 	if plan.ValkeyClusterName.IsNull() || plan.ValkeyClusterName.IsUnknown() || plan.ValkeyClusterName.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("valkey_cluster_name"),
-			"Missing required value",
-			"The Valkey Cluster name is required.",
-		)
-		return
+		return &AttributeError{
+			AttributePath: path.Root("valkey_cluster_name"),
+			Summary:       "Missing required value",
+			Detail:        "The Valkey Cluster name is required.",
+		}
 	}
 	if plan.AccessLoggingConfig != nil {
 		if plan.AccessLoggingConfig.LogGroupName.IsNull() || plan.AccessLoggingConfig.LogGroupName.IsUnknown() || plan.AccessLoggingConfig.LogGroupName.ValueString() == "" {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("access_logging_config").AtName("log_group_name"),
-				"Missing required value",
-				"The CloudWatch Log Group name is required when access logging config is set.",
-			)
-			return
+			return &AttributeError{
+				AttributePath: path.Root("access_logging_config").AtName("log_group_name"),
+				Summary:       "Missing required value",
+				Detail:        "The CloudWatch Log Group name is required when access logging config is set.",
+			}
 		}
 		if plan.AccessLoggingConfig.IamRoleArn.IsNull() || plan.AccessLoggingConfig.IamRoleArn.IsUnknown() || plan.AccessLoggingConfig.IamRoleArn.ValueString() == "" || len(plan.AccessLoggingConfig.IamRoleArn.ValueString()) < 20 || !strings.HasPrefix(plan.AccessLoggingConfig.IamRoleArn.ValueString(), "arn:aws:") {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("access_logging_config").AtName("iam_role_arn"),
-				"Missing required value",
-				"The IAM Role ARN is required when access logging config is set.",
-			)
-			return
+			return &AttributeError{
+				AttributePath: path.Root("access_logging_config").AtName("iam_role_arn"),
+				Summary:       "Missing required value",
+				Detail:        "The IAM Role ARN is required when access logging config is set.",
+			}
 		}
 		if plan.AccessLoggingConfig.Region.IsNull() || plan.AccessLoggingConfig.Region.IsUnknown() || plan.AccessLoggingConfig.Region.ValueString() == "" {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("access_logging_config").AtName("region"),
-				"Missing required value",
-				"The AWS region is required when access logging config is set.",
-			)
-			return
+			return &AttributeError{
+				AttributePath: path.Root("access_logging_config").AtName("region"),
+				Summary:       "Missing required value",
+				Detail:        "The AWS region is required when access logging config is set.",
+			}
 		}
 	}
+	if plan.MetricsConfig != nil {
+		if plan.MetricsConfig.IamRoleArn.IsNull() || plan.MetricsConfig.IamRoleArn.IsUnknown() || plan.MetricsConfig.IamRoleArn.ValueString() == "" || len(plan.MetricsConfig.IamRoleArn.ValueString()) < 20 || !strings.HasPrefix(plan.MetricsConfig.IamRoleArn.ValueString(), "arn:aws:") {
+			return &AttributeError{
+				AttributePath: path.Root("metrics_config").AtName("iam_role_arn"),
+				Summary:       "Missing required value",
+				Detail:        "The IAM Role ARN is required when metrics config is set.",
+			}
+		}
+		if plan.MetricsConfig.Region.IsNull() || plan.MetricsConfig.Region.IsUnknown() || plan.MetricsConfig.Region.ValueString() == "" {
+			return &AttributeError{
+				AttributePath: path.Root("metrics_config").AtName("region"),
+				Summary:       "Missing required value",
+				Detail:        "The AWS region is required when metrics config is set.",
+			}
+		}
+	}
+	return nil
+}
 
-	client := *r.httpClient
-
-	// Create map of request body to marshal into JSON
+func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*bytes.Buffer, error) {
 	requestData := DescribeObjectStoresResponseData{
 		Name: plan.Name.ValueString(),
 		StorageConfig: struct {
@@ -274,33 +302,83 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			},
 		}
 	}
+	if plan.MetricsConfig != nil {
+		requestData.MetricsConfig = struct {
+			Cloudwatch struct {
+				IamRoleArn string `json:"iam_role_arn"`
+				Region     string `json:"region"`
+			} `json:"cloudwatch"`
+		}{
+			Cloudwatch: struct {
+				IamRoleArn string `json:"iam_role_arn"`
+				Region     string `json:"region"`
+			}{
+				IamRoleArn: plan.MetricsConfig.IamRoleArn.ValueString(),
+				Region:     plan.MetricsConfig.Region.ValueString(),
+			},
+		}
+	}
 	requestJson, err := json.Marshal(requestData)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-		return
+		return nil, err
 	}
 	requestBody := bytes.NewBuffer(requestJson)
+	return requestBody, nil
+}
 
+func makeCreateObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStoreResource, requestBody *bytes.Buffer) error {
+	client := *r.httpClient
 	putUrl := fmt.Sprintf("%s/objectstore/%s", r.httpEndpoint, plan.Name.ValueString())
 	putRequest, err := http.NewRequest("PUT", putUrl, requestBody)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to create object store, got error: %s", err))
-		return
+		return err
 	}
 	putRequest.Header.Set("Content-Type", "application/json")
 	putRequest.Header.Set("Authorization", r.httpAuthToken)
 	httpResp, err := client.Do(putRequest)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create object store, got error: %s", err))
-		return
+		return err
 	}
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
 		err = httpResp.Body.Close()
 		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to close HTTP response body, got error: %s", err))
+			return err
 		}
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create object store, got non-200 response: %s %s", httpResp.Status, string(body)))
+		return fmt.Errorf("unable to create object store, got non-200 response: %s %s", httpResp.Status, string(body))
+	}
+	return nil
+}
+
+func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan ObjectStoreResourceModel
+
+	// Retrieve values from the plan
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	validationErr := validateCreateObjectStoreTerraformPlan(&plan)
+	if validationErr != nil {
+		resp.Diagnostics.AddAttributeError(validationErr.AttributePath, validationErr.Summary, validationErr.Detail)
+		return
+	}
+
+	requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
+	if err != nil {
+		resp.Diagnostics.AddError("Create Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+		return
+	}
+
+	if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create Object Store",
+			fmt.Sprintf("An unexpected error occurred when creating the object store. "+
+				"If the error is not clear, please contact the provider developers.\n\n"+
+				"Create Error: %s", err),
+		)
 		return
 	}
 
@@ -377,6 +455,12 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 			Region:       types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.Region),
 		}
 	}
+	if foundObjectStore.MetricsConfig.Cloudwatch.IamRoleArn != "" {
+		state.MetricsConfig = &MetricsConfig{
+			IamRoleArn: types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.IamRoleArn),
+			Region:     types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.Region),
+		}
+	}
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -387,16 +471,42 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 }
 
 func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var state ObjectStoreResourceModel
+	var plan ObjectStoreResourceModel
 
-	// Read Terraform prior state data into the model
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	// Retrieve values from the plan
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	resp.Diagnostics.AddError("Internal Error", "Object Store resource does not yet support updates, please delete and recreate the resource to make changes")
+	validationErr := validateCreateObjectStoreTerraformPlan(&plan)
+	if validationErr != nil {
+		resp.Diagnostics.AddAttributeError(validationErr.AttributePath, validationErr.Summary, validationErr.Detail)
+		return
+	}
+
+	requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
+	if err != nil {
+		resp.Diagnostics.AddError("Update Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+		return
+	}
+
+	if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Update Object Store",
+			fmt.Sprintf("An unexpected error occurred when updating the object store. "+
+				"If the error is not clear, please contact the provider developers.\n\n"+
+				"Update Error: %s", err),
+		)
+		return
+	}
+
+	// Map response body to schema and populate computed attribute values
+	plan.Id = types.StringValue(plan.Name.ValueString())
+
+	// Save data into Terraform state
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *ObjectStoreResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -424,6 +534,12 @@ type DescribeObjectStoresResponseData struct {
 			Region       string `json:"region"`
 		} `json:"cloudwatch"`
 	} `json:"access_logging_config"`
+	MetricsConfig struct {
+		Cloudwatch struct {
+			IamRoleArn string `json:"iam_role_arn"`
+			Region     string `json:"region"`
+		} `json:"cloudwatch"`
+	} `json:"metrics_config"`
 }
 
 func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeObjectStoresResponseData, error) {

@@ -22,7 +22,7 @@ resource "momento_valkey_cluster" "example" {
   shard_count            = 1
 }
 
-# Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix and access_logging_config) specified.
+# Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix, access_logging_config, and metrics_config) specified.
 # Waits for the valkey cluster to be created first if creating both for the first time.
 resource "momento_object_store" "example" {
   name                = "object-store-name"
@@ -34,6 +34,10 @@ resource "momento_object_store" "example" {
     iam_role_arn   = "cloudwatch-iam-role-arn"
     log_group_name = "log-group-name"
     region         = "us-west-2"
+  }
+  metrics_config = {
+    iam_role_arn = "metrics-iam-role-arn"
+    region       = "us-west-2"
   }
   # Explicit dependency: Forces object store creation to wait for cluster creation
   depends_on = [
@@ -55,6 +59,7 @@ resource "momento_object_store" "example" {
 ### Optional
 
 - `access_logging_config` (Attributes) Optional configuration for access logging through CloudWatch. (see [below for nested schema](#nestedatt--access_logging_config))
+- `metrics_config` (Attributes) Optional configuration for exporting CloudWatch metrics. (see [below for nested schema](#nestedatt--metrics_config))
 - `s3_prefix` (String) Optional prefix path within the S3 bucket.
 
 ### Read-Only
@@ -69,3 +74,12 @@ Required:
 - `iam_role_arn` (String) The ARN of the IAM role that Momento will assume to write logs.
 - `log_group_name` (String) The CloudWatch Log Group name where access logs will be delivered. The log group must already exist.
 - `region` (String) The AWS region where the CloudWatch log group is located.
+
+
+<a id="nestedatt--metrics_config"></a>
+### Nested Schema for `metrics_config`
+
+Required:
+
+- `iam_role_arn` (String) The ARN of the IAM role that Momento will assume to export metrics.
+- `region` (String) The AWS region where the metrics will be exported to.
