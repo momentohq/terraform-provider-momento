@@ -604,6 +604,37 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			return
 		}
 	}
+
+	err := r.pollUntilClusterReady(plan.ClusterName.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to poll cluster until update confirmed, got error: %s", err))
+		return
+	}
+}
+
+func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string) error {
+	// TODO: poll using new GET endpoint
+
+	// Poll until cluster status is "Active"
+	foundCluster, err := findValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		return err
+	}
+	if foundCluster == nil {
+		return fmt.Errorf("Cluster with name \"%s\" not found", clusterName)
+	}
+	for foundCluster.Status != "Active" {
+		// wait 1 minute
+		time.Sleep(1 * time.Minute)
+		foundCluster, err = findValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+		if err != nil {
+			return err
+		}
+		if foundCluster == nil {
+			return fmt.Errorf("Cluster with name \"%s\" not found", clusterName)
+		}
+	}
+	return nil
 }
 
 // Return set of planned updates
