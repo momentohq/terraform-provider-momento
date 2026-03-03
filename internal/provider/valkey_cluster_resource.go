@@ -628,7 +628,7 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string) error 
 		return err
 	}
 	if foundCluster == nil {
-		return fmt.Errorf("Cluster with name \"%s\" not found", clusterName)
+		return fmt.Errorf("cluster with name \"%s\" not found", clusterName)
 	}
 	for foundCluster.Status != "Active" {
 		// wait 1 minute
@@ -638,7 +638,7 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string) error 
 			return err
 		}
 		if foundCluster == nil {
-			return fmt.Errorf("Cluster with name \"%s\" not found", clusterName)
+			return fmt.Errorf("cluster with name \"%s\" not found", clusterName)
 		}
 	}
 	return nil
