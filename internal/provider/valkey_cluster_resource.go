@@ -546,7 +546,14 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
-	// The remaining possible updates may accept shard_placements updates:
+	// The remaining possible updates may accept shard_placements updates, but not a change in primary AZ for each shard
+	if determineIfShardAZChanged(currentState.ShardPlacements, plan.ShardPlacements) {
+		resp.Diagnostics.AddError(
+			"Invalid Update",
+			"Updates to shard_placements that change the primary AZ for a shard are not allowed. Please manually delete and recreate the resource.",
+		)
+		return
+	}
 
 	// Increase shard count
 	if diff["shard_count"] && plan.ShardCount.ValueInt64() > currentState.ShardCount.ValueInt64() {
@@ -637,7 +644,16 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string) error 
 	return nil
 }
 
-// Return set of planned updates
+func determineIfShardAZChanged(currentShards []ShardPlacementModel, plannedShards []ShardPlacementModel) bool {
+	// Currently assumes shards will always be returned in the same order
+	for i, shard := range currentShards {
+		if shard.AvailabilityZone.ValueString() != plannedShards[i].AvailabilityZone.ValueString() {
+			return true
+		}
+	}
+	return false
+}
+
 func determineDiff(currentState ValkeyClusterResourceModel, plan ValkeyClusterResourceModel) map[string]bool {
 	diff := make(map[string]bool)
 	if currentState.ShardCount.ValueInt64() != plan.ShardCount.ValueInt64() {
@@ -675,7 +691,7 @@ func determineDiff(currentState ValkeyClusterResourceModel, plan ValkeyClusterRe
 
 // POST /ec-cluster/<cluster-name>/replication-group
 // Optional fields: node_instance_type, enforce_shard_multi_az
-// Expected response: 202 Accepted
+// Expected response: 202 Accepted.
 func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeInstanceType *string, enforceShardMultiAz *bool) error {
 	requestMap := map[string]interface{}{}
 	if nodeInstanceType != nil {
@@ -711,7 +727,7 @@ func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeI
 
 // POST /ec-cluster/<cluster-name>/shard-configuration
 // Required fields: shard_count, shards_to_remove (indexes)
-// Expected response: 202 Accepted
+// Expected response: 202 Accepted.
 func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCount int, shardsToRemove []int) error {
 	requestMap := map[string]interface{}{
 		"shard_count":      shardCount,
@@ -744,7 +760,7 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 
 // POST /ec-cluster/<cluster-name>/shard-configuration
 // Required fields: shard_count, shard_placements
-// Expected response: 202 Accepted
+// Expected response: 202 Accepted.
 func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCount int, shardPlacements []ShardPlacementModel) error {
 	requestMap := map[string]interface{}{
 		"shard_count":       shardCount,
@@ -778,7 +794,7 @@ func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCoun
 // POST /ec-cluster/<cluster-name>/increase-replica-count
 // Required fields: replication_factor
 // Optional fields: shard_placements
-// Expected response: 202 Accepted
+// Expected response: 202 Accepted.
 func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replicationFactor int, shardPlacements []ShardPlacementModel) error {
 	requestMap := map[string]interface{}{
 		"replication_factor": replicationFactor,
@@ -814,7 +830,7 @@ func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replica
 // POST /ec-cluster/<cluster-name>/decrease-replica-count
 // Required fields: replication_factor
 // Optional fields: shard_placements
-// Expected response: 202 Accepted
+// Expected response: 202 Accepted.
 func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replicationFactor int, shardPlacements []ShardPlacementModel) error {
 	requestMap := map[string]interface{}{
 		"replication_factor": replicationFactor,
