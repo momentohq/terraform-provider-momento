@@ -262,12 +262,9 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 				replicaAZs[j] = az.ValueString()
 			}
 			placements[i] = map[string]interface{}{
-				"shard_index":       sp.Index.ValueInt64(),
-				"availability_zone": sp.AvailabilityZone.ValueString(),
-				// "replica_availability_zones": replicaAZs,
-			}
-			if len(replicaAZs) > 0 {
-				placements[i]["replica_availability_zones"] = replicaAZs
+				"shard_index":                sp.Index.ValueInt64(),
+				"availability_zone":          sp.AvailabilityZone.ValueString(),
+				"replica_availability_zones": replicaAZs,
 			}
 		}
 		requestMap["shard_placements"] = placements
