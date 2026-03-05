@@ -262,9 +262,12 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 				replicaAZs[j] = az.ValueString()
 			}
 			placements[i] = map[string]interface{}{
-				"shard_index":                sp.Index.ValueInt64(),
-				"availability_zone":          sp.AvailabilityZone.ValueString(),
-				"replica_availability_zones": replicaAZs,
+				"shard_index":       sp.Index.ValueInt64(),
+				"availability_zone": sp.AvailabilityZone.ValueString(),
+				// "replica_availability_zones": replicaAZs,
+			}
+			if len(replicaAZs) > 0 {
+				placements[i]["replica_availability_zones"] = replicaAZs
 			}
 		}
 		requestMap["shard_placements"] = placements
@@ -402,9 +405,9 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 			Index:            types.Int64Value(sp.ShardIndex),
 			AvailabilityZone: types.StringValue(sp.AvailabilityZone),
 			ReplicaAvailabilityZones: func() []types.String {
-				var replicaAZs []types.String
-				for _, az := range sp.ReplicaAvailabilityZones {
-					replicaAZs = append(replicaAZs, types.StringValue(az))
+				replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
+				for j, az := range sp.ReplicaAvailabilityZones {
+					replicaAZs[j] = types.StringValue(az)
 				}
 				return replicaAZs
 			}(),
@@ -468,7 +471,6 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			valueBool := plan.EnforceShardMultiAz.ValueBool()
 			enforceShardMultiAz = &valueBool
 		}
-		resp.Diagnostics.AddWarning("Unimplemented", "updateReplicateGroup unimplemented")
 		err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nodeInstanceType, enforceShardMultiAz)
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -490,7 +492,6 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 
 	// Increase shard count
 	if diff["shard_count"] && plan.ShardCount.ValueInt64() > currentState.ShardCount.ValueInt64() {
-		resp.Diagnostics.AddWarning("Unimplemented", "increaseShardCount unimplemented")
 		err := r.increaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), plan.ShardPlacements)
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -508,7 +509,6 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		for i := range shardsToRemove {
 			shardsToRemove[i] = int(plan.ShardCount.ValueInt64()) + i
 		}
-		resp.Diagnostics.AddWarning("Unimplemented", "decreaseShardCount unimplemented")
 		err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove)
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -521,7 +521,6 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 
 	// Increase replication factor
 	if diff["replication_factor"] && plan.ReplicationFactor.ValueInt64() > currentState.ReplicationFactor.ValueInt64() {
-		resp.Diagnostics.AddWarning("Unimplemented", "increaseReplicaCount unimplemented")
 		err := r.increaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -534,7 +533,6 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 
 	// Decrease replication factor
 	if diff["replication_factor"] && plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
-		resp.Diagnostics.AddWarning("Unimplemented", "decreaseReplicaCount unimplemented")
 		err := r.decreaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -546,6 +544,25 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	r.pollUntilClusterUpdated(plan.ClusterName.ValueString(), resp)
+
+	// Save data into Terraform state
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func shardPlacementsToAPIFormat(shardPlacements []ShardPlacementModel) []map[string]interface{} {
+	placements := make([]map[string]interface{}, len(shardPlacements))
+	for i, sp := range shardPlacements {
+		replicaAZs := make([]string, len(sp.ReplicaAvailabilityZones))
+		for j, az := range sp.ReplicaAvailabilityZones {
+			replicaAZs[j] = az.ValueString()
+		}
+		placements[i] = map[string]interface{}{
+			"shard_index":                sp.Index.ValueInt64(),
+			"availability_zone":          sp.AvailabilityZone.ValueString(),
+			"replica_availability_zones": replicaAZs,
+		}
+	}
+	return placements
 }
 
 func determineIfShardAZChanged(currentShards []ShardPlacementModel, plannedShards []ShardPlacementModel) bool {
@@ -618,13 +635,16 @@ func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeI
 		return err
 	}
 	updateRequest.Header.Set("Authorization", r.httpAuthToken)
+	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
 	if err != nil {
 		return err
 	}
 	if httpResp.StatusCode != 202 {
-		return fmt.Errorf("unable to update replication group, got non-202 response: %d", httpResp.StatusCode)
+		respBody, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -651,13 +671,16 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 		return err
 	}
 	updateRequest.Header.Set("Authorization", r.httpAuthToken)
+	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
 	if err != nil {
 		return err
 	}
 	if httpResp.StatusCode != 202 {
-		return fmt.Errorf("unable to decrease shard count, got non-202 response: %d", httpResp.StatusCode)
+		respBody, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -667,8 +690,8 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 // Expected response: 202 Accepted.
 func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCount int, shardPlacements []ShardPlacementModel) error {
 	requestMap := map[string]interface{}{
-		"shard_count":       shardCount,
-		"shards_placements": shardPlacements,
+		"shard_count":      shardCount,
+		"shard_placements": shardPlacementsToAPIFormat(shardPlacements),
 	}
 
 	requestJson, err := json.Marshal(requestMap)
@@ -684,13 +707,16 @@ func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCoun
 		return err
 	}
 	updateRequest.Header.Set("Authorization", r.httpAuthToken)
+	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
 	if err != nil {
 		return err
 	}
 	if httpResp.StatusCode != 202 {
-		return fmt.Errorf("unable to increase shard count, got non-202 response: %d", httpResp.StatusCode)
+		respBody, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -704,7 +730,7 @@ func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replica
 		"replication_factor": replicationFactor,
 	}
 	if len(shardPlacements) > 0 {
-		requestMap["shard_placements"] = shardPlacements
+		requestMap["shard_placements"] = shardPlacementsToAPIFormat(shardPlacements)
 	}
 
 	requestJson, err := json.Marshal(requestMap)
@@ -720,13 +746,16 @@ func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replica
 		return err
 	}
 	updateRequest.Header.Set("Authorization", r.httpAuthToken)
+	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
 	if err != nil {
 		return err
 	}
 	if httpResp.StatusCode != 202 {
-		return fmt.Errorf("unable to increase replication factor, got non-202 response: %d", httpResp.StatusCode)
+		respBody, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -740,7 +769,7 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 		"replication_factor": replicationFactor,
 	}
 	if len(shardPlacements) > 0 {
-		requestMap["shard_placements"] = shardPlacements
+		requestMap["shard_placements"] = shardPlacementsToAPIFormat(shardPlacements)
 	}
 
 	requestJson, err := json.Marshal(requestMap)
@@ -756,13 +785,16 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 		return err
 	}
 	updateRequest.Header.Set("Authorization", r.httpAuthToken)
+	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
 	if err != nil {
 		return err
 	}
 	if httpResp.StatusCode != 202 {
-		return fmt.Errorf("unable to decrease replication factor, got non-202 response: %d", httpResp.StatusCode)
+		respBody, _ := io.ReadAll(httpResp.Body)
+		_ = httpResp.Body.Close()
+		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
