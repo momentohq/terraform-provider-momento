@@ -47,7 +47,6 @@ type ShardPlacementModel struct {
 type ValkeyClusterResourceModel struct {
 	Id                  types.String          `tfsdk:"id"`
 	ClusterName         types.String          `tfsdk:"cluster_name"`
-	Description         types.String          `tfsdk:"description"`
 	NodeInstanceType    types.String          `tfsdk:"node_instance_type"`
 	ShardCount          types.Int64           `tfsdk:"shard_count"`
 	ReplicationFactor   types.Int64           `tfsdk:"replication_factor"`
@@ -75,13 +74,6 @@ func (r *ValkeyClusterResource) Schema(ctx context.Context, req resource.SchemaR
 			"cluster_name": schema.StringAttribute{
 				MarkdownDescription: "Name of the Valkey Cluster.",
 				Required:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"description": schema.StringAttribute{
-				MarkdownDescription: "Optional description.",
-				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -175,12 +167,11 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	}
 
 	client := *r.httpClient
-	putUrl := fmt.Sprintf("%s/cluster/%s", r.httpEndpoint, plan.ClusterName.ValueString())
+	postUrl := fmt.Sprintf("%s/ec-cluster", r.httpEndpoint)
 
 	// Create map of request body to marshal into JSON
-
 	requestMap := map[string]interface{}{
-		"description":            plan.Description.ValueString(),
+		"name":                   plan.ClusterName.ValueString(),
 		"node_instance_type":     plan.NodeInstanceType.ValueString(),
 		"shard_count":            plan.ShardCount.ValueInt64(),
 		"replication_factor":     plan.ReplicationFactor.ValueInt64(),
@@ -210,14 +201,14 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	}
 
 	requestBody := bytes.NewBuffer(requestJson)
-	putRequest, err := http.NewRequest("PUT", putUrl, requestBody)
+	postRequest, err := http.NewRequest("POST", postUrl, requestBody)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to create valkey cluster, got error: %s", err))
 		return
 	}
-	putRequest.Header.Set("Content-Type", "application/json")
-	putRequest.Header.Set("Authorization", r.httpAuthToken)
-	httpResp, err := client.Do(putRequest)
+	postRequest.Header.Set("Content-Type", "application/json")
+	postRequest.Header.Set("Authorization", r.httpAuthToken)
+	httpResp, err := client.Do(postRequest)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got error: %s", err))
 		return
@@ -274,7 +265,7 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	}
 
 	client := *r.httpClient
-	deleteUrl := fmt.Sprintf("%s/cluster/%s", r.httpEndpoint, state.ClusterName.ValueString())
+	deleteUrl := fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, state.ClusterName.ValueString())
 	deleteRequest, err := http.NewRequest("DELETE", deleteUrl, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to delete valkey cluster, got error: %s", err))
@@ -285,6 +276,10 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	httpResp, err := client.Do(deleteRequest)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete valkey cluster, got error: %s", err))
+		return
+	}
+	if httpResp.StatusCode == 404 {
+		resp.Diagnostics.AddWarning("Client Warning", fmt.Sprintf("Valkey cluster with name \"%s\" not found, assuming already deleted", state.ClusterName.ValueString()))
 		return
 	}
 	if httpResp.StatusCode >= 300 {
@@ -348,10 +343,6 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 	state.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
 	state.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
 
-	if foundCluster.Description != "" {
-		state.Description = types.StringValue(foundCluster.Description)
-	}
-
 	// reset the list of shard placements before repopulating from the response
 	state.ShardPlacements = nil
 	for _, sp := range foundCluster.ShardPlacements {
@@ -389,13 +380,35 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 	resp.Diagnostics.AddWarning("Internal Error", "Valkey Cluster resource does not yet support updates, please delete and recreate the resource to make changes")
 }
 
+func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string) error {
+	// Poll until cluster status is "Active"
+	foundCluster, err := findValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		return err
+	}
+	if foundCluster == nil {
+		return fmt.Errorf("cluster with name \"%s\" not found", clusterName)
+	}
+	for foundCluster.Status != "Active" {
+		// wait 1 minute
+		time.Sleep(1 * time.Minute)
+		foundCluster, err = findValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+		if err != nil {
+			return err
+		}
+		if foundCluster == nil {
+			return fmt.Errorf("cluster with name \"%s\" not found", clusterName)
+		}
+	}
+	return nil
+}
+
 func (r *ValkeyClusterResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
-type ListValkeyClustersResponseData struct {
+type DescribeValkeyClustersResponseData struct {
 	Name                string `json:"name"`
-	Description         string `json:"description"`
 	NodeInstanceType    string `json:"node_instance_type"`
 	ShardCount          int64  `json:"shard_count"`
 	ReplicationFactor   int64  `json:"replication_factor"`
@@ -409,8 +422,8 @@ type ListValkeyClustersResponseData struct {
 	Errors []string `json:"errors"`
 }
 
-func findValkeyCluster(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ListValkeyClustersResponseData, error) {
-	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/cluster", httpEndpoint), nil)
+func findValkeyCluster(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeValkeyClustersResponseData, error) {
+	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", httpEndpoint, name), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +431,9 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 	getResp, err := client.Do(getRequest)
 	if err != nil {
 		return nil, err
+	}
+	if getResp.StatusCode == 404 {
+		return nil, nil
 	}
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
@@ -433,17 +449,10 @@ func findValkeyCluster(client http.Client, name string, httpEndpoint string, htt
 		return nil, fmt.Errorf("error reading response body: %v", err)
 	}
 
-	var clusters []ListValkeyClustersResponseData
-	err = json.Unmarshal(bodyBytes, &clusters)
+	var cluster DescribeValkeyClustersResponseData
+	err = json.Unmarshal(bodyBytes, &cluster)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
 	}
-
-	for _, cluster := range clusters {
-		if cluster.Name == name {
-			return &cluster, nil
-		}
-	}
-
-	return nil, nil
+	return &cluster, nil
 }
