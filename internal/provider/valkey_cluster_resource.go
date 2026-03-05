@@ -134,6 +134,73 @@ func (r *ValkeyClusterResource) Schema(ctx context.Context, req resource.SchemaR
 	}
 }
 
+func validateCreateValkeyClusterTerraformPlan(plan *ValkeyClusterResourceModel) *AttributeError {
+	if plan.ClusterName.IsNull() || plan.ClusterName.IsUnknown() || plan.ClusterName.ValueString() == "" {
+		return &AttributeError{
+			AttributePath: path.Root("cluster_name"),
+			Summary:       "Missing required value",
+			Detail:        "The Valkey Cluster name is required.",
+		}
+	}
+	if plan.NodeInstanceType.IsNull() || plan.NodeInstanceType.IsUnknown() || plan.NodeInstanceType.ValueString() == "" {
+		return &AttributeError{
+			AttributePath: path.Root("node_instance_type"),
+			Summary:       "Missing required value",
+			Detail:        "The node instance type is required.",
+		}
+	}
+	if plan.ShardCount.IsNull() || plan.ShardCount.IsUnknown() || plan.ShardCount.ValueInt64() <= 0 {
+		return &AttributeError{
+			AttributePath: path.Root("shard_count"),
+			Summary:       "Invalid value",
+			Detail:        "Shard count must be a positive integer.",
+		}
+	}
+	if plan.ReplicationFactor.IsNull() || plan.ReplicationFactor.IsUnknown() || plan.ReplicationFactor.ValueInt64() < 0 {
+		return &AttributeError{
+			AttributePath: path.Root("replication_factor"),
+			Summary:       "Invalid value",
+			Detail:        "Replication factor must be a non-negative integer.",
+		}
+	}
+	if plan.EnforceShardMultiAz.IsNull() || plan.EnforceShardMultiAz.IsUnknown() {
+		return &AttributeError{
+			AttributePath: path.Root("enforce_shard_multi_az"),
+			Summary:       "Missing required value",
+			Detail:        "The enforce_shard_multi_az boolean value is required.",
+		}
+	}
+	// Validate length of shard_placements matches shard_count, number of replica_availability_zones in each shard placement
+	// matches replication_factor, and that shard indexes are non-negative. Return any validation errors in the response diagnostics.
+	if plan.ShardPlacements != nil {
+		if len(plan.ShardPlacements) != int(plan.ShardCount.ValueInt64()) {
+			return &AttributeError{
+				AttributePath: path.Root("shard_placements"),
+				Summary:       "Invalid shard placements",
+				Detail:        fmt.Sprintf("Number of shard placements must match shard count (%d).", plan.ShardCount.ValueInt64()),
+			}
+		}
+
+		for i, sp := range plan.ShardPlacements {
+			if sp.Index.IsNull() || sp.Index.IsUnknown() || sp.Index.ValueInt64() < 0 {
+				return &AttributeError{
+					AttributePath: path.Root("shard_placements").AtListIndex(i).AtName("index"),
+					Summary:       "Invalid value",
+					Detail:        "Shard index must be a non-negative integer.",
+				}
+			}
+			if len(sp.ReplicaAvailabilityZones) != int(plan.ReplicationFactor.ValueInt64()) {
+				return &AttributeError{
+					AttributePath: path.Root("shard_placements").AtListIndex(i).AtName("replica_availability_zones"),
+					Summary:       "Invalid value",
+					Detail:        fmt.Sprintf("Number of replica availability zones must match replication factor (%d).", plan.ReplicationFactor.ValueInt64()),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (r *ValkeyClusterResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	// Prevent panic if the provider has not been configured.
 	if req.ProviderData == nil {
@@ -163,6 +230,15 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if validationErr := validateCreateValkeyClusterTerraformPlan(&plan); validationErr != nil {
+		resp.Diagnostics.AddAttributeError(
+			validationErr.AttributePath,
+			validationErr.Summary,
+			validationErr.Detail,
+		)
 		return
 	}
 
@@ -230,27 +306,10 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 
 	// Poll until cluster status is "Active"
-	foundCluster, err := findValkeyCluster(client, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	err = r.pollUntilClusterReady(plan.ClusterName.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters to confirm creation, got error: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to poll cluster until creation confirmed, got error: %s", err))
 		return
-	}
-	if foundCluster == nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Cluster with name \"%s\" not found", plan.ClusterName.ValueString()))
-		return
-	}
-	for foundCluster.Status != "Active" {
-		// wait 1 minute
-		time.Sleep(1 * time.Minute)
-		foundCluster, err = findValkeyCluster(client, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters to confirm creation, got error: %s", err))
-			return
-		}
-		if foundCluster == nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Cluster with name \"%s\" not found", plan.ClusterName.ValueString()))
-			return
-		}
 	}
 }
 
