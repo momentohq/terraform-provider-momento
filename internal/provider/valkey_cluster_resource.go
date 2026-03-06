@@ -507,11 +507,71 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	// If replication_factor is changing from nonzero to 0, enforce_shard_multi_az must be set to false first.
+	// Else it'll fail with "Invalid Argument: Must have at least 1 replica for Multi-AZ enabled Replication Group"
+	if plan.ReplicationFactor.ValueInt64() == 0 && currentState.ReplicationFactor.ValueInt64() > 0 {
+		// Ask user to update enforce_shard_multi_az accordingly
+		if plan.EnforceShardMultiAz.ValueBool() {
+			resp.Diagnostics.AddError("Invalid Update", "enforce_shard_multi_az must be set to false before setting replication_factor to 0. Please update the resource to set enforce_shard_multi_az to false before retrying")
+			return
+		}
+
+		var enforceShardMultiAz *bool
+		if diff["enforce_shard_multi_az"] {
+			valueBool := plan.EnforceShardMultiAz.ValueBool()
+			enforceShardMultiAz = &valueBool
+		}
+		err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nil, enforceShardMultiAz)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Failed to update replication group",
+				fmt.Sprintf("Error updating replication group for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+			)
+			return
+		}
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+	}
+
 	if diff["replication_factor"] {
-		// If updating both replication_factor and shard_count, then only update replication_factor first for the existing shards
-		updatedCurrentShardPlacements := currentState.ShardPlacements
-		for i := range updatedCurrentShardPlacements {
-			updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = plan.ShardPlacements[i].ReplicaAvailabilityZones
+		// If not changing number of shards, then send shard placements as is
+		updatedCurrentShardPlacements := plan.ShardPlacements
+
+		// Else update replication_factor for existing shards first
+		if plan.ShardCount.ValueInt64() != currentState.ShardCount.ValueInt64() {
+			// Make copy of current shard placements to modify for the replication factor update, so that we don't mutate the current state shard placements in case we need to use them for a subsequent shard count update if both replication_factor and shard_count are changing
+			updatedCurrentShardPlacements = make([]ShardPlacementModel, len(currentState.ShardPlacements))
+			for i, sp := range currentState.ShardPlacements {
+				replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
+				copy(replicaAZs, sp.ReplicaAvailabilityZones)
+				updatedCurrentShardPlacements[i] = ShardPlacementModel{
+					Index:                    sp.Index,
+					AvailabilityZone:         sp.AvailabilityZone,
+					ReplicaAvailabilityZones: replicaAZs,
+				}
+			}
+
+			// if going to 0, make all the shards have empty replica_availability_zones
+			if plan.ReplicationFactor.ValueInt64() == 0 {
+				for i := range updatedCurrentShardPlacements {
+					updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = []types.String{}
+				}
+			} else {
+				// if decreasing replication_factor, trim the number of replica availability zones for each shard to match the new replication factor
+				if plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
+					for i := range updatedCurrentShardPlacements {
+						updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = updatedCurrentShardPlacements[i].ReplicaAvailabilityZones[:plan.ReplicationFactor.ValueInt64()]
+					}
+				} else {
+					// if increasing replication_factor, keep the existing replica availability zones and add new ones in the same AZ as the primary for the new replicas
+					for i := range updatedCurrentShardPlacements {
+						currentReplicaAZs := updatedCurrentShardPlacements[i].ReplicaAvailabilityZones
+						primaryAZ := updatedCurrentShardPlacements[i].AvailabilityZone
+						for j := int64(len(currentReplicaAZs)); j < plan.ReplicationFactor.ValueInt64(); j++ {
+							updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = append(updatedCurrentShardPlacements[i].ReplicaAvailabilityZones, primaryAZ)
+						}
+					}
+				}
+			}
 		}
 
 		// Increase replication factor
