@@ -501,10 +501,15 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 
 	// Decrease shard count
 	if diff["shard_count"] && plan.ShardCount.ValueInt64() < currentState.ShardCount.ValueInt64() {
-		// shard indexes are 0-based, so the indexes of shards to remove when decreasing shard count are the shard count through current shard count - 1
-		shardsToRemove := make([]int, currentState.ShardCount.ValueInt64()-plan.ShardCount.ValueInt64())
-		for i := range shardsToRemove {
-			shardsToRemove[i] = int(plan.ShardCount.ValueInt64()) + i
+		plannedIndexes := make(map[string]bool, len(plan.ShardPlacements))
+		for _, sp := range plan.ShardPlacements {
+			plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] = true
+		}
+		var shardsToRemove []int
+		for _, sp := range currentState.ShardPlacements {
+			if !plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] {
+				shardsToRemove = append(shardsToRemove, int(sp.Index.ValueInt64()))
+			}
 		}
 		err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove)
 		if err != nil {
@@ -564,11 +569,14 @@ func shardPlacementsToAPIFormat(shardPlacements []ShardPlacementModel) []map[str
 
 func determineIfShardAZChanged(currentShards []ShardPlacementModel, plannedShards []ShardPlacementModel) bool {
 	// Currently assumes shards will always be returned in the same order
-	for i, shard := range currentShards {
-		if shard.AvailabilityZone.ValueString() != plannedShards[i].AvailabilityZone.ValueString() {
-			return true
+	if len(currentShards) == len(plannedShards) {
+		for i, shard := range currentShards {
+			if shard.AvailabilityZone.ValueString() != plannedShards[i].AvailabilityZone.ValueString() {
+				return true
+			}
 		}
 	}
+	// TODO: handle when current and planned shards change in length
 	return false
 }
 
@@ -812,13 +820,13 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string, resp *
 func (r *ValkeyClusterResource) pollUntilClusterUpdated(clusterName string, resp *resource.UpdateResponse) {
 	// Poll until cluster status is "Active", log any other errors but do not stop polling
 	for {
+		time.Sleep(1 * time.Minute)
 		foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 		if foundCluster != nil && foundCluster.Status == "Active" {
 			return
 		} else if err != nil || foundCluster == nil {
 			resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
 		}
-		time.Sleep(1 * time.Minute)
 	}
 }
 
