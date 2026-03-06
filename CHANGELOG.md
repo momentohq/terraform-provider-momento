@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.4.0...v0.5.0) (2026-03-06)
+
+
+### Features
+
+* add support for updating valkey clusters ([#65](https://github.com/momentohq/terraform-provider-momento/issues/65)) ([5a1bac5](https://github.com/momentohq/terraform-provider-momento/commit/5a1bac5a70e3440dff094bbf7d2bca298da51ab1))
+
+
+### Bug Fixes
+
+* update cluster http routes ([#66](https://github.com/momentohq/terraform-provider-momento/issues/66)) ([a32d46e](https://github.com/momentohq/terraform-provider-momento/commit/a32d46e86ca3b799f0fe7b57b803d5eede92ffe3))
+
 ## [0.4.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.3.2...v0.4.0) (2026-02-25)
 
 
