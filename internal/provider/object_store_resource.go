@@ -339,12 +339,9 @@ func makeCreateObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStore
 	if err != nil {
 		return err
 	}
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		err = httpResp.Body.Close()
-		if err != nil {
-			return err
-		}
 		return fmt.Errorf("unable to create object store, got non-200 response: %s %s", httpResp.Status, string(body))
 	}
 	return nil
@@ -552,12 +549,9 @@ func findObjectStore(client http.Client, name string, httpEndpoint string, httpA
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = getResp.Body.Close() }()
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
-		err = getResp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("unable to close HTTP response body, got error: %s", err)
-		}
 		return nil, fmt.Errorf("unable to list object store, got non-200 response: %s %s", getResp.Status, string(body))
 	}
 
