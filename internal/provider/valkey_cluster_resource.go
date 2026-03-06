@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -520,16 +521,16 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		if diff["enforce_shard_multi_az"] {
 			valueBool := plan.EnforceShardMultiAz.ValueBool()
 			enforceShardMultiAz = &valueBool
+			err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nil, enforceShardMultiAz)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to update replication group",
+					fmt.Sprintf("Error updating replication group for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
+			r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 		}
-		err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nil, enforceShardMultiAz)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to update replication group",
-				fmt.Sprintf("Error updating replication group for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-			)
-			return
-		}
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
 	if diff["replication_factor"] {
@@ -607,6 +608,13 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			// If increasing shard_count and shard_placements was not specified, then pass only shard_count (placements will be nil anyway)
 			err := r.increaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), plan.ShardPlacements)
 			if err != nil {
+				if strings.Contains(err.Error(), "Availability zones in node group configuration does not match actual availability zones for existing cache clusters") {
+					resp.Diagnostics.AddError(
+						"Failed to increase shard count due to AZ mismatch",
+						fmt.Sprintf("Error increasing shard count for cluster %s: %s. This error can occur when replica or shards end up in AZs that were not specified in the terraform resource. Try calling the describe API on your cluster and updating the terraform resource with the correct AZs, or contact Momento support for assistance.", currentState.ClusterName.ValueString(), err.Error()),
+					)
+					return
+				}
 				resp.Diagnostics.AddError(
 					"Failed to increase shard count",
 					fmt.Sprintf("Error increasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
