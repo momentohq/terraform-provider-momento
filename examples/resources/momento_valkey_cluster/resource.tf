@@ -1,4 +1,4 @@
-# Creates a small test cluster in us-west-2 region with all optional configs (description and shard_placements) specified.
+# Creates a small test cluster in us-west-2 region with all optional configs (timeouts and shard_placements) specified.
 resource "momento_valkey_cluster" "example" {
   cluster_name           = "cluster-name"
   enforce_shard_multi_az = false
