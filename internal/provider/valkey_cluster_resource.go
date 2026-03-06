@@ -568,15 +568,26 @@ func shardPlacementsToAPIFormat(shardPlacements []ShardPlacementModel) []map[str
 }
 
 func determineIfShardAZChanged(currentShards []ShardPlacementModel, plannedShards []ShardPlacementModel) bool {
-	// Currently assumes shards will always be returned in the same order
-	if len(currentShards) == len(plannedShards) {
-		for i, shard := range currentShards {
-			if shard.AvailabilityZone.ValueString() != plannedShards[i].AvailabilityZone.ValueString() {
+	// Compare primary availability zones by shard index so that changes are
+	// detected even when the number of shards changes or their order differs.
+	currentByIndex := make(map[int64]string, len(currentShards))
+	for _, shard := range currentShards {
+		currentByIndex[shard.Index.ValueInt64()] = shard.AvailabilityZone.ValueString()
+	}
+
+	plannedByIndex := make(map[int64]string, len(plannedShards))
+	for _, shard := range plannedShards {
+		plannedByIndex[shard.Index.ValueInt64()] = shard.AvailabilityZone.ValueString()
+	}
+
+	// Only compare shards that exist in both current and planned states.
+	for idx, currentAZ := range currentByIndex {
+		if plannedAZ, ok := plannedByIndex[idx]; ok {
+			if currentAZ != plannedAZ {
 				return true
 			}
 		}
 	}
-	// TODO: handle when current and planned shards change in length
 	return false
 }
 
@@ -796,10 +807,10 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 	if err != nil {
 		return err
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
-		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
+		return fmt.Errorf("unable to decrease replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -831,7 +842,7 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(clusterName string, resp
 }
 
 func (r *ValkeyClusterResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
+	resource.ImportStatePassthroughID(ctx, path.Root("cluster_name"), req, resp)
 }
 
 type DescribeValkeyClustersResponseData struct {
