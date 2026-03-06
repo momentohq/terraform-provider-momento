@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -53,6 +54,7 @@ type ValkeyClusterResourceModel struct {
 	ReplicationFactor   types.Int64           `tfsdk:"replication_factor"`
 	EnforceShardMultiAz types.Bool            `tfsdk:"enforce_shard_multi_az"`
 	ShardPlacements     []ShardPlacementModel `tfsdk:"shard_placements"`
+	Timeouts            timeouts.Value        `tfsdk:"timeouts"`
 }
 
 func (r *ValkeyClusterResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -76,7 +78,7 @@ func (r *ValkeyClusterResource) Schema(ctx context.Context, req resource.SchemaR
 				MarkdownDescription: "Name of the Valkey Cluster.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"node_instance_type": schema.StringAttribute{
@@ -131,6 +133,13 @@ func (r *ValkeyClusterResource) Schema(ctx context.Context, req resource.SchemaR
 					},
 				},
 			},
+		},
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -234,6 +243,14 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, 120*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	if validationErr := validateCreateValkeyClusterTerraformPlan(&plan); validationErr != nil {
 		resp.Diagnostics.AddAttributeError(
 			validationErr.AttributePath,
@@ -288,7 +305,7 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got error: %s", err))
 		return
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got non-200 response: %s %s", httpResp.Status, string(body)))
@@ -314,6 +331,14 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, 120*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	client := *r.httpClient
 	deleteUrl := fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, state.ClusterName.ValueString())
@@ -437,6 +462,20 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	// Updating name is not allowed since it might be used by an object store, require explicit delete and recreate
+	if plan.ClusterName.ValueString() != currentState.ClusterName.ValueString() {
+		resp.Diagnostics.AddError("Invalid Update", "Updating the cluster name is not allowed. Please manually delete and recreate the resource.")
+		return
+	}
+
+	updateTimeout, diags := plan.Timeouts.Update(ctx, 120*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	if validationErr := validateCreateValkeyClusterTerraformPlan(&plan); validationErr != nil {
 		resp.Diagnostics.AddAttributeError(
 			validationErr.AttributePath,
@@ -481,6 +520,8 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
+	r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+
 	// The remaining possible updates may accept shard_placements updates, but not a change in primary AZ for each shard
 	if determineIfShardAZChanged(currentState.ShardPlacements, plan.ShardPlacements) {
 		resp.Diagnostics.AddError(
@@ -490,61 +531,78 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	// Increase shard count
-	if diff["shard_count"] && plan.ShardCount.ValueInt64() > currentState.ShardCount.ValueInt64() {
-		err := r.increaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), plan.ShardPlacements)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to increase shard count",
-				fmt.Sprintf("Error increasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-			)
-			return
-		}
-	}
-
-	// Decrease shard count
-	if diff["shard_count"] && plan.ShardCount.ValueInt64() < currentState.ShardCount.ValueInt64() {
-		plannedIndexes := make(map[string]bool, len(plan.ShardPlacements))
-		for _, sp := range plan.ShardPlacements {
-			plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] = true
-		}
-		var shardsToRemove []int
-		for _, sp := range currentState.ShardPlacements {
-			if !plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] {
-				shardsToRemove = append(shardsToRemove, int(sp.Index.ValueInt64()))
+	if diff["shard_count"] {
+		// Increase shard count
+		if plan.ShardCount.ValueInt64() > currentState.ShardCount.ValueInt64() {
+			// If increasing shard_count and shard_placements was not specified, then pass only shard_count (placements will be nil anyway)
+			err := r.increaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), plan.ShardPlacements)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to increase shard count",
+					fmt.Sprintf("Error increasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
 			}
 		}
-		err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to decrease shard count",
-				fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-			)
-			return
+
+		// Decrease shard count
+		if plan.ShardCount.ValueInt64() < currentState.ShardCount.ValueInt64() {
+			var shardsToRemove []int
+			// If decreasing shard_count and shard_placements weren't specified, then pass the indexes of the shards to remove based on the difference between current and planned shard counts
+			if !diff["shard_placements"] && plan.ShardPlacements == nil && currentState.ShardPlacements == nil {
+				shardsToRemove = make([]int, currentState.ShardCount.ValueInt64()-plan.ShardCount.ValueInt64())
+				for i := range shardsToRemove {
+					shardsToRemove[i] = int(plan.ShardCount.ValueInt64()) + i
+				}
+			} else {
+				// Else pass both shard_count and shard_placements and calculate which shard indexes to remove based on the difference between current and planned shard placements
+				plannedIndexes := make(map[string]bool, len(plan.ShardPlacements))
+				for _, sp := range plan.ShardPlacements {
+					plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] = true
+				}
+				for _, sp := range currentState.ShardPlacements {
+					if !plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] {
+						shardsToRemove = append(shardsToRemove, int(sp.Index.ValueInt64()))
+					}
+				}
+			}
+
+			err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to decrease shard count",
+					fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
 		}
 	}
 
-	// Increase replication factor
-	if diff["replication_factor"] && plan.ReplicationFactor.ValueInt64() > currentState.ReplicationFactor.ValueInt64() {
-		err := r.increaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to increase replication factor",
-				fmt.Sprintf("Error increasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-			)
-			return
-		}
-	}
+	r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 
-	// Decrease replication factor
-	if diff["replication_factor"] && plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
-		err := r.decreaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to decrease replication factor",
-				fmt.Sprintf("Error decreasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-			)
-			return
+	if diff["replication_factor"] {
+		// Increase replication factor
+		if plan.ReplicationFactor.ValueInt64() > currentState.ReplicationFactor.ValueInt64() {
+			err := r.increaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to increase replication factor",
+					fmt.Sprintf("Error increasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
+		}
+
+		// Decrease replication factor
+		if plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
+			err := r.decreaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to decrease replication factor",
+					fmt.Sprintf("Error decreasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
 		}
 	}
 
@@ -660,7 +718,7 @@ func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeI
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -696,7 +754,7 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -732,7 +790,7 @@ func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCoun
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -771,7 +829,7 @@ func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replica
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -810,7 +868,7 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 	if err != nil {
 		return err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to decrease replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -886,7 +944,7 @@ func describeValkeyCluster(client http.Client, name string, httpEndpoint string,
 	if err != nil {
 		return nil, err
 	}
-	defer getResp.Body.Close()
+	defer func() { _ = getResp.Body.Close() }()
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
 		return nil, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
