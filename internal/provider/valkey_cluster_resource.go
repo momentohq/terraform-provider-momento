@@ -726,7 +726,7 @@ func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeI
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
+		return fmt.Errorf("unable to update replication group, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -762,7 +762,7 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
+		return fmt.Errorf("unable to decrease shard count, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
@@ -798,7 +798,7 @@ func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCoun
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
+		return fmt.Errorf("unable to increase shard count, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
 }
