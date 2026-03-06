@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -363,18 +364,31 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
-	if err != nil {
-		resp.Diagnostics.AddError("Create Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-		return
+	// Retry creation up to 3 times in case of eventual consistency issues
+	// with the Valkey Cluster or IAM roles coming online.
+	createAttempt := 0
+	var lastErr *error
+	for createAttempt < 4 {
+		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
+		if err != nil {
+			resp.Diagnostics.AddError("Create Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+			return
+		}
+		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+			lastErr = &err
+		} else {
+			lastErr = nil
+			break
+		}
+		createAttempt++
+		time.Sleep(10 * time.Second)
 	}
-
-	if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+	if lastErr != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Object Store",
 			fmt.Sprintf("An unexpected error occurred when creating the object store. "+
 				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Create Error: %s", err),
+				"Create Error: %s", *lastErr),
 		)
 		return
 	}
