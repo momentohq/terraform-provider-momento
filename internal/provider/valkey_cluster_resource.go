@@ -302,7 +302,7 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 
 	// Poll until cluster status is "Active"
-	r.pollUntilClusterReady(plan.ClusterName.ValueString(), resp)
+	r.pollUntilClusterReady(ctx, plan.ClusterName.ValueString(), resp)
 }
 
 func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -341,21 +341,27 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	}
 
 	for {
-		describeRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, state.ClusterName.ValueString()), nil)
-		if err != nil {
-			resp.Diagnostics.AddError("Unable to create describe request", fmt.Sprintf("Unable to poll cluster until deletion confirmed, got error: %s", err))
+		select {
+		case <-ctx.Done():
+			// Context has been cancelled, stop polling
 			return
+		default:
+			time.Sleep(1 * time.Minute)
+			describeRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, state.ClusterName.ValueString()), nil)
+			if err != nil {
+				resp.Diagnostics.AddError("Unable to create describe request", fmt.Sprintf("Unable to poll cluster until deletion confirmed, got error: %s", err))
+				return
+			}
+			describeRequest.Header.Set("Authorization", r.httpAuthToken)
+			describeResp, err := client.Do(describeRequest)
+			if describeResp != nil && describeResp.StatusCode == 404 {
+				return
+			} else if err != nil {
+				resp.Diagnostics.AddWarning("Describe after delete error", fmt.Sprintf("Error: %s. Continuing to poll until cluster not found", err))
+			} else if describeResp != nil && describeResp.StatusCode >= 300 {
+				resp.Diagnostics.AddWarning("Describe after delete error", fmt.Sprintf("Received non-200 response: %d. Continuing to poll until cluster not found", describeResp.StatusCode))
+			}
 		}
-		describeRequest.Header.Set("Authorization", r.httpAuthToken)
-		describeResp, err := client.Do(describeRequest)
-		if describeResp != nil && describeResp.StatusCode == 404 {
-			return
-		} else if err != nil {
-			resp.Diagnostics.AddWarning("Describe after delete error", fmt.Sprintf("Error: %s. Continuing to poll until cluster not found", err))
-		} else if describeResp != nil && describeResp.StatusCode >= 300 {
-			resp.Diagnostics.AddWarning("Describe after delete error", fmt.Sprintf("Received non-200 response: %d. Continuing to poll until cluster not found", describeResp.StatusCode))
-		}
-		time.Sleep(1 * time.Minute)
 	}
 }
 
@@ -542,7 +548,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
-	r.pollUntilClusterUpdated(plan.ClusterName.ValueString(), resp)
+	r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -812,29 +818,42 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 	return nil
 }
 
-func (r *ValkeyClusterResource) pollUntilClusterReady(clusterName string, resp *resource.CreateResponse) {
+func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clusterName string, resp *resource.CreateResponse) {
 	// Poll until cluster status is "Active", log any other errors but do not stop polling
 	for {
-		foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
-		if foundCluster != nil && foundCluster.Status == "Active" {
+		select {
+		case <-ctx.Done():
+			// Context has been cancelled, stop polling
 			return
-		} else if err != nil || foundCluster == nil {
-			resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
+		default:
+			time.Sleep(1 * time.Minute)
+			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+			if foundCluster != nil && foundCluster.Status == "Active" {
+				return
+			} else if err != nil || foundCluster == nil {
+				resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
+			}
 		}
-		time.Sleep(1 * time.Minute)
 	}
 }
 
-func (r *ValkeyClusterResource) pollUntilClusterUpdated(clusterName string, resp *resource.UpdateResponse) {
+func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string, resp *resource.UpdateResponse) {
 	// Poll until cluster status is "Active", log any other errors but do not stop polling
 	for {
-		time.Sleep(1 * time.Minute)
-		foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
-		if foundCluster != nil && foundCluster.Status == "Active" {
+		select {
+		case <-ctx.Done():
+			// Context has been cancelled, stop polling
 			return
-		} else if err != nil || foundCluster == nil {
-			resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
+		default:
+			time.Sleep(1 * time.Minute)
+			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+			if foundCluster != nil && foundCluster.Status == "Active" {
+				return
+			} else if err != nil || foundCluster == nil {
+				resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
+			}
 		}
+
 	}
 }
 
