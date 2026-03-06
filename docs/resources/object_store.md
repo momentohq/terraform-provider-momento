@@ -20,6 +20,13 @@ resource "momento_valkey_cluster" "example" {
   node_instance_type     = "cache.t3.micro"
   replication_factor     = 1
   shard_count            = 1
+
+  # Updates can take an especially long time, configure as needed
+  timeouts {
+    create = "20m"
+    update = "60m"
+    delete = "20m"
+  }
 }
 
 # Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix, access_logging_config, and metrics_config) specified.

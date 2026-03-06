@@ -11,4 +11,11 @@ resource "momento_valkey_cluster" "example" {
     availability_zone          = "us-west-2a"
     replica_availability_zones = ["us-west-2b"]
   }]
+
+  # Updates can take an especially long time, configure as needed
+  timeouts {
+    create = "20m"
+    update = "60m"
+    delete = "20m"
+  }
 }
