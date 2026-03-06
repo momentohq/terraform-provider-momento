@@ -288,12 +288,9 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got error: %s", err))
 		return
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		err = httpResp.Body.Close()
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to close HTTP response body, got error: %s", err))
-		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got non-200 response: %s %s", httpResp.Status, string(body)))
 		return
 	}
@@ -657,9 +654,9 @@ func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeI
 	if err != nil {
 		return err
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
@@ -693,9 +690,9 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 	if err != nil {
 		return err
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
@@ -729,9 +726,9 @@ func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCoun
 	if err != nil {
 		return err
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
@@ -768,9 +765,9 @@ func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replica
 	if err != nil {
 		return err
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
 	}
 	return nil
@@ -870,12 +867,9 @@ func describeValkeyCluster(client http.Client, name string, httpEndpoint string,
 	if err != nil {
 		return nil, err
 	}
+	defer getResp.Body.Close()
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
-		err = getResp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("unable to close HTTP response body, got error: %s", err)
-		}
 		return nil, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
 	}
 
