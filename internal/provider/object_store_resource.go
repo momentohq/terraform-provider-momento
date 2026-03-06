@@ -80,7 +80,7 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "Name of the Object Store.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"s3_bucket_name": schema.StringAttribute{
@@ -285,18 +285,8 @@ func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*byt
 		},
 	}
 	if plan.AccessLoggingConfig != nil {
-		requestData.AccessLoggingConfig = struct {
-			Cloudwatch struct {
-				LogGroupName string `json:"log_group_name"`
-				IamRoleArn   string `json:"iam_role_arn"`
-				Region       string `json:"region"`
-			} `json:"cloudwatch"`
-		}{
-			Cloudwatch: struct {
-				LogGroupName string `json:"log_group_name"`
-				IamRoleArn   string `json:"iam_role_arn"`
-				Region       string `json:"region"`
-			}{
+		requestData.AccessLoggingConfig = &ObjectStoreAccessLoggingConfig{
+			Cloudwatch: &ObjectStoreCloudwatchAccessLoggingConfig{
 				LogGroupName: plan.AccessLoggingConfig.LogGroupName.ValueString(),
 				IamRoleArn:   plan.AccessLoggingConfig.IamRoleArn.ValueString(),
 				Region:       plan.AccessLoggingConfig.Region.ValueString(),
@@ -304,16 +294,8 @@ func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*byt
 		}
 	}
 	if plan.MetricsConfig != nil {
-		requestData.MetricsConfig = struct {
-			Cloudwatch struct {
-				IamRoleArn string `json:"iam_role_arn"`
-				Region     string `json:"region"`
-			} `json:"cloudwatch"`
-		}{
-			Cloudwatch: struct {
-				IamRoleArn string `json:"iam_role_arn"`
-				Region     string `json:"region"`
-			}{
+		requestData.MetricsConfig = &ObjectStoreMetricsConfig{
+			Cloudwatch: &ObjectStoreCloudwatchMetricsConfig{
 				IamRoleArn: plan.MetricsConfig.IamRoleArn.ValueString(),
 				Region:     plan.MetricsConfig.Region.ValueString(),
 			},
@@ -459,14 +441,14 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	}
 	state.S3IamRoleArn = types.StringValue(foundObjectStore.StorageConfig.S3.IamRoleArn)
 	state.ValkeyClusterName = types.StringValue(foundObjectStore.CacheConfig.ValkeyCluster.ClusterName)
-	if foundObjectStore.AccessLoggingConfig.Cloudwatch.LogGroupName != "" {
+	if foundObjectStore.AccessLoggingConfig != nil && foundObjectStore.AccessLoggingConfig.Cloudwatch != nil {
 		state.AccessLoggingConfig = &AccessLoggingConfig{
 			LogGroupName: types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.LogGroupName),
 			IamRoleArn:   types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.IamRoleArn),
 			Region:       types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.Region),
 		}
 	}
-	if foundObjectStore.MetricsConfig.Cloudwatch.IamRoleArn != "" {
+	if foundObjectStore.MetricsConfig != nil && foundObjectStore.MetricsConfig.Cloudwatch != nil {
 		state.MetricsConfig = &MetricsConfig{
 			IamRoleArn: types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.IamRoleArn),
 			Region:     types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.Region),
@@ -524,6 +506,25 @@ func (r *ObjectStoreResource) ImportState(ctx context.Context, req resource.Impo
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
+type ObjectStoreCloudwatchMetricsConfig struct {
+	IamRoleArn string `json:"iam_role_arn"`
+	Region     string `json:"region"`
+}
+
+type ObjectStoreMetricsConfig struct {
+	Cloudwatch *ObjectStoreCloudwatchMetricsConfig `json:"cloudwatch,omitempty"`
+}
+
+type ObjectStoreCloudwatchAccessLoggingConfig struct {
+	LogGroupName string `json:"log_group_name"`
+	IamRoleArn   string `json:"iam_role_arn"`
+	Region       string `json:"region"`
+}
+
+type ObjectStoreAccessLoggingConfig struct {
+	Cloudwatch *ObjectStoreCloudwatchAccessLoggingConfig `json:"cloudwatch,omitempty"`
+}
+
 type DescribeObjectStoresResponseData struct {
 	Name          string `json:"name"`
 	StorageConfig struct {
@@ -538,19 +539,8 @@ type DescribeObjectStoresResponseData struct {
 			ClusterName string `json:"cluster_name"`
 		} `json:"valkey_cluster"`
 	} `json:"cache_config"`
-	AccessLoggingConfig struct {
-		Cloudwatch struct {
-			LogGroupName string `json:"log_group_name"`
-			IamRoleArn   string `json:"iam_role_arn"`
-			Region       string `json:"region"`
-		} `json:"cloudwatch"`
-	} `json:"access_logging_config"`
-	MetricsConfig struct {
-		Cloudwatch struct {
-			IamRoleArn string `json:"iam_role_arn"`
-			Region     string `json:"region"`
-		} `json:"cloudwatch"`
-	} `json:"metrics_config"`
+	AccessLoggingConfig *ObjectStoreAccessLoggingConfig `json:"access_logging_config,omitempty"`
+	MetricsConfig       *ObjectStoreMetricsConfig       `json:"metrics_config,omitempty"`
 }
 
 func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeObjectStoresResponseData, error) {
