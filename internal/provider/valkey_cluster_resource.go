@@ -547,7 +547,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		// Decrease shard count
 		if plan.ShardCount.ValueInt64() < currentState.ShardCount.ValueInt64() {
 			// If decreasing shard_count and shard_placements weren't specified, then pass the indexes of the shards to remove based on the difference between current and planned shard counts
-			if plan.ShardPlacements == nil || len(plan.ShardPlacements) == 0 {
+			if len(plan.ShardPlacements) == 0 {
 				resp.Diagnostics.AddError("Specify decrease shard_count shard_placements", "When decreasing shard_count, shard_placements must also be specified to indicate which shards to remove. Please update the plan to include shard_placements with the indexes of the shards to remove.")
 				return
 			}
