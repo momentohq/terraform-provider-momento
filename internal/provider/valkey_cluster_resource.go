@@ -76,7 +76,7 @@ func (r *ValkeyClusterResource) Schema(ctx context.Context, req resource.SchemaR
 				MarkdownDescription: "Name of the Valkey Cluster.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"node_instance_type": schema.StringAttribute{
