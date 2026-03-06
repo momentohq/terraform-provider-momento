@@ -547,33 +547,38 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 
 		// Decrease shard count
 		if plan.ShardCount.ValueInt64() < currentState.ShardCount.ValueInt64() {
-			var shardsToRemove []int
 			// If decreasing shard_count and shard_placements weren't specified, then pass the indexes of the shards to remove based on the difference between current and planned shard counts
 			if !diff["shard_placements"] && plan.ShardPlacements == nil && currentState.ShardPlacements == nil {
-				shardsToRemove = make([]int, currentState.ShardCount.ValueInt64()-plan.ShardCount.ValueInt64())
+				shardsToRemove := make([]int, currentState.ShardCount.ValueInt64()-plan.ShardCount.ValueInt64())
 				for i := range shardsToRemove {
 					shardsToRemove[i] = int(plan.ShardCount.ValueInt64()) + i
 				}
-			} else {
-				// Else pass both shard_count and shard_placements and calculate which shard indexes to remove based on the difference between current and planned shard placements
-				plannedIndexes := make(map[string]bool, len(plan.ShardPlacements))
-				for _, sp := range plan.ShardPlacements {
-					plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] = true
+				if err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove); err != nil {
+					resp.Diagnostics.AddError(
+						"Failed to decrease shard count",
+						fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+					)
+					return
 				}
+			} else {
+				// Else calculate which shard indexes to remove based on the difference between current and planned shard placements
+				plannedIndexes := make(map[int64]bool, len(plan.ShardPlacements))
+				for _, sp := range plan.ShardPlacements {
+					plannedIndexes[sp.Index.ValueInt64()] = true
+				}
+				var shardsToRemove []int
 				for _, sp := range currentState.ShardPlacements {
-					if !plannedIndexes[fmt.Sprintf("index-%d-az-%s", sp.Index.ValueInt64(), sp.AvailabilityZone.ValueString())] {
+					if !plannedIndexes[sp.Index.ValueInt64()] {
 						shardsToRemove = append(shardsToRemove, int(sp.Index.ValueInt64()))
 					}
 				}
-			}
-
-			err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove)
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Failed to decrease shard count",
-					fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-				)
-				return
+				if err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove); err != nil {
+					resp.Diagnostics.AddError(
+						"Failed to decrease shard count",
+						fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+					)
+					return
+				}
 			}
 		}
 	}
