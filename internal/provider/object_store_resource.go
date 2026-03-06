@@ -346,10 +346,10 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	// Retry creation up to 3 times in case of eventual consistency issues
+	// Create and allow retrying up to 3 times in case of eventual consistency issues
 	// with the Valkey Cluster or IAM roles coming online.
 	createAttempt := 0
-	var lastErr *error
+	var lastErr error
 	for createAttempt < 4 {
 		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
 		if err != nil {
@@ -357,7 +357,7 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			return
 		}
 		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
-			lastErr = &err
+			lastErr = err
 		} else {
 			lastErr = nil
 			break
@@ -370,7 +370,7 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			"Unable to Create Object Store",
 			fmt.Sprintf("An unexpected error occurred when creating the object store. "+
 				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Create Error: %s", *lastErr),
+				"Create Error: %s", lastErr),
 		)
 		return
 	}
