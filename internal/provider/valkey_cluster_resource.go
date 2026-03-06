@@ -518,9 +518,8 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			)
 			return
 		}
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
-
-	r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 
 	// The remaining possible updates may accept shard_placements updates, but not a change in primary AZ for each shard
 	if determineIfShardAZChanged(currentState.ShardPlacements, plan.ShardPlacements) {
@@ -548,42 +547,32 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		// Decrease shard count
 		if plan.ShardCount.ValueInt64() < currentState.ShardCount.ValueInt64() {
 			// If decreasing shard_count and shard_placements weren't specified, then pass the indexes of the shards to remove based on the difference between current and planned shard counts
-			if !diff["shard_placements"] && plan.ShardPlacements == nil && currentState.ShardPlacements == nil {
-				shardsToRemove := make([]int, currentState.ShardCount.ValueInt64()-plan.ShardCount.ValueInt64())
-				for i := range shardsToRemove {
-					shardsToRemove[i] = int(plan.ShardCount.ValueInt64()) + i
-				}
-				if err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove); err != nil {
-					resp.Diagnostics.AddError(
-						"Failed to decrease shard count",
-						fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-					)
-					return
-				}
-			} else {
-				// Else calculate which shard indexes to remove based on the difference between current and planned shard placements
-				plannedIndexes := make(map[int64]bool, len(plan.ShardPlacements))
-				for _, sp := range plan.ShardPlacements {
-					plannedIndexes[sp.Index.ValueInt64()] = true
-				}
-				var shardsToRemove []int
-				for _, sp := range currentState.ShardPlacements {
-					if !plannedIndexes[sp.Index.ValueInt64()] {
-						shardsToRemove = append(shardsToRemove, int(sp.Index.ValueInt64()))
-					}
-				}
-				if err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove); err != nil {
-					resp.Diagnostics.AddError(
-						"Failed to decrease shard count",
-						fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-					)
-					return
+			if plan.ShardPlacements == nil || len(plan.ShardPlacements) == 0 {
+				resp.Diagnostics.AddError("Specify decrease shard_count shard_placements", "When decreasing shard_count, shard_placements must also be specified to indicate which shards to remove. Please update the plan to include shard_placements with the indexes of the shards to remove.")
+				return
+			}
+			// Calculate which shard indexes to remove based on the difference between current and planned shard placements
+			plannedIndexes := make(map[int64]bool, len(plan.ShardPlacements))
+			for _, sp := range plan.ShardPlacements {
+				plannedIndexes[sp.Index.ValueInt64()] = true
+			}
+			var shardsToRemove []int
+			for _, sp := range currentState.ShardPlacements {
+				if !plannedIndexes[sp.Index.ValueInt64()] {
+					shardsToRemove = append(shardsToRemove, int(sp.Index.ValueInt64()))
 				}
 			}
+			if err := r.decreaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), shardsToRemove); err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to decrease shard count",
+					fmt.Sprintf("Error decreasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
 		}
-	}
 
-	r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+	}
 
 	if diff["replication_factor"] {
 		// Increase replication factor
@@ -609,9 +598,9 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 				return
 			}
 		}
-	}
 
-	r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+	}
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
