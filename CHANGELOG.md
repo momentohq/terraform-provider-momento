@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.0...v0.5.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* docs, clusters, and object store improvements ([#68](https://github.com/momentohq/terraform-provider-momento/issues/68)) ([a230dbe](https://github.com/momentohq/terraform-provider-momento/commit/a230dbee8511bbe8a0e23a2250eaad15e859a331))
+
 ## [0.5.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.4.0...v0.5.0) (2026-03-06)
 
 
