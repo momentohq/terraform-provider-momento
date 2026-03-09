@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -498,30 +499,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	// Regardless of shard_placements, updateReplicationGroup if node_instance_type and/or enforce_shard_multi_az are updated
-	if diff["node_instance_type"] || diff["enforce_shard_multi_az"] {
-		var nodeInstanceType *string
-		if diff["node_instance_type"] {
-			valueString := plan.NodeInstanceType.ValueString()
-			nodeInstanceType = &valueString
-		}
-		var enforceShardMultiAz *bool
-		if diff["enforce_shard_multi_az"] {
-			valueBool := plan.EnforceShardMultiAz.ValueBool()
-			enforceShardMultiAz = &valueBool
-		}
-		err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nodeInstanceType, enforceShardMultiAz)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to update replication group",
-				fmt.Sprintf("Error updating replication group for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-			)
-			return
-		}
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
-	}
-
-	// The remaining possible updates may accept shard_placements updates, but not a change in primary AZ for each shard
+	// The replica/shard updates may accept shard_placements updates, but not a change in primary AZ for each shard
 	if determineIfShardAZChanged(currentState.ShardPlacements, plan.ShardPlacements) {
 		resp.Diagnostics.AddError(
 			"Invalid Update",
@@ -530,12 +508,113 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	// If replication_factor is changing from nonzero to 0, enforce_shard_multi_az must be set to false first.
+	// Else it'll fail with "Invalid Argument: Must have at least 1 replica for Multi-AZ enabled Replication Group"
+	if plan.ReplicationFactor.ValueInt64() == 0 && currentState.ReplicationFactor.ValueInt64() > 0 {
+		// Ask user to update enforce_shard_multi_az accordingly
+		if plan.EnforceShardMultiAz.ValueBool() {
+			resp.Diagnostics.AddError("Invalid Update", "enforce_shard_multi_az must be set to false before setting replication_factor to 0. Please update the resource to set enforce_shard_multi_az to false before retrying")
+			return
+		}
+
+		var enforceShardMultiAz *bool
+		if diff["enforce_shard_multi_az"] {
+			valueBool := plan.EnforceShardMultiAz.ValueBool()
+			enforceShardMultiAz = &valueBool
+			err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nil, enforceShardMultiAz)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to update replication group",
+					fmt.Sprintf("Error updating replication group for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
+			r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+		}
+	}
+
+	if diff["replication_factor"] {
+		// If not changing number of shards, then send shard placements as is
+		updatedCurrentShardPlacements := plan.ShardPlacements
+
+		// Else update replication_factor for existing shards first
+		if plan.ShardCount.ValueInt64() != currentState.ShardCount.ValueInt64() {
+			// Make copy of current shard placements to modify for the replication factor update, so that we don't mutate the current state shard placements in case we need to use them for a subsequent shard count update if both replication_factor and shard_count are changing
+			updatedCurrentShardPlacements = make([]ShardPlacementModel, len(currentState.ShardPlacements))
+			for i, sp := range currentState.ShardPlacements {
+				replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
+				copy(replicaAZs, sp.ReplicaAvailabilityZones)
+				updatedCurrentShardPlacements[i] = ShardPlacementModel{
+					Index:                    sp.Index,
+					AvailabilityZone:         sp.AvailabilityZone,
+					ReplicaAvailabilityZones: replicaAZs,
+				}
+			}
+
+			// if going to 0, make all the shards have empty replica_availability_zones
+			if plan.ReplicationFactor.ValueInt64() == 0 {
+				for i := range updatedCurrentShardPlacements {
+					updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = []types.String{}
+				}
+			} else {
+				// if decreasing replication_factor, trim the number of replica availability zones for each shard to match the new replication factor
+				if plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
+					for i := range updatedCurrentShardPlacements {
+						updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = updatedCurrentShardPlacements[i].ReplicaAvailabilityZones[:plan.ReplicationFactor.ValueInt64()]
+					}
+				} else {
+					// if increasing replication_factor, keep the existing replica availability zones and add new ones in the same AZ as the primary for the new replicas
+					for i := range updatedCurrentShardPlacements {
+						currentReplicaAZs := updatedCurrentShardPlacements[i].ReplicaAvailabilityZones
+						primaryAZ := updatedCurrentShardPlacements[i].AvailabilityZone
+						for j := int64(len(currentReplicaAZs)); j < plan.ReplicationFactor.ValueInt64(); j++ {
+							updatedCurrentShardPlacements[i].ReplicaAvailabilityZones = append(updatedCurrentShardPlacements[i].ReplicaAvailabilityZones, primaryAZ)
+						}
+					}
+				}
+			}
+		}
+
+		// Increase replication factor
+		if plan.ReplicationFactor.ValueInt64() > currentState.ReplicationFactor.ValueInt64() {
+			err := r.increaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), updatedCurrentShardPlacements)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to increase replication factor",
+					fmt.Sprintf("Error increasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
+		}
+
+		// Decrease replication factor
+		if plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
+			err := r.decreaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), updatedCurrentShardPlacements)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Failed to decrease replication factor",
+					fmt.Sprintf("Error decreasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+				)
+				return
+			}
+		}
+
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+	}
+
 	if diff["shard_count"] {
 		// Increase shard count
 		if plan.ShardCount.ValueInt64() > currentState.ShardCount.ValueInt64() {
 			// If increasing shard_count and shard_placements was not specified, then pass only shard_count (placements will be nil anyway)
 			err := r.increaseShardCount(currentState.ClusterName.ValueString(), int(plan.ShardCount.ValueInt64()), plan.ShardPlacements)
 			if err != nil {
+				if strings.Contains(err.Error(), "Availability zones in node group configuration does not match actual availability zones for existing cache clusters") {
+					resp.Diagnostics.AddError(
+						"Failed to increase shard count due to AZ mismatch",
+						fmt.Sprintf("Error increasing shard count for cluster %s: %s. This error can occur when replica or shards end up in AZs that were not specified in the terraform resource. Try calling the describe API on your cluster and updating the terraform resource with the correct AZs, or contact Momento support for assistance.", currentState.ClusterName.ValueString(), err.Error()),
+					)
+					return
+				}
 				resp.Diagnostics.AddError(
 					"Failed to increase shard count",
 					fmt.Sprintf("Error increasing shard count for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
@@ -574,31 +653,26 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
-	if diff["replication_factor"] {
-		// Increase replication factor
-		if plan.ReplicationFactor.ValueInt64() > currentState.ReplicationFactor.ValueInt64() {
-			err := r.increaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Failed to increase replication factor",
-					fmt.Sprintf("Error increasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-				)
-				return
-			}
+	// Regardless of shard_placements, updateReplicationGroup if node_instance_type and/or enforce_shard_multi_az are updated
+	if diff["node_instance_type"] || diff["enforce_shard_multi_az"] {
+		var nodeInstanceType *string
+		if diff["node_instance_type"] {
+			valueString := plan.NodeInstanceType.ValueString()
+			nodeInstanceType = &valueString
 		}
-
-		// Decrease replication factor
-		if plan.ReplicationFactor.ValueInt64() < currentState.ReplicationFactor.ValueInt64() {
-			err := r.decreaseReplicaCount(currentState.ClusterName.ValueString(), int(plan.ReplicationFactor.ValueInt64()), plan.ShardPlacements)
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Failed to decrease replication factor",
-					fmt.Sprintf("Error decreasing replication factor for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
-				)
-				return
-			}
+		var enforceShardMultiAz *bool
+		if diff["enforce_shard_multi_az"] {
+			valueBool := plan.EnforceShardMultiAz.ValueBool()
+			enforceShardMultiAz = &valueBool
 		}
-
+		err := r.updateReplicationGroup(currentState.ClusterName.ValueString(), nodeInstanceType, enforceShardMultiAz)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Failed to update replication group",
+				fmt.Sprintf("Error updating replication group for cluster %s: %s", currentState.ClusterName.ValueString(), err.Error()),
+			)
+			return
+		}
 		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -79,7 +80,7 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "Name of the Object Store.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"s3_bucket_name": schema.StringAttribute{
@@ -284,18 +285,8 @@ func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*byt
 		},
 	}
 	if plan.AccessLoggingConfig != nil {
-		requestData.AccessLoggingConfig = struct {
-			Cloudwatch struct {
-				LogGroupName string `json:"log_group_name"`
-				IamRoleArn   string `json:"iam_role_arn"`
-				Region       string `json:"region"`
-			} `json:"cloudwatch"`
-		}{
-			Cloudwatch: struct {
-				LogGroupName string `json:"log_group_name"`
-				IamRoleArn   string `json:"iam_role_arn"`
-				Region       string `json:"region"`
-			}{
+		requestData.AccessLoggingConfig = &ObjectStoreAccessLoggingConfig{
+			Cloudwatch: &ObjectStoreCloudwatchAccessLoggingConfig{
 				LogGroupName: plan.AccessLoggingConfig.LogGroupName.ValueString(),
 				IamRoleArn:   plan.AccessLoggingConfig.IamRoleArn.ValueString(),
 				Region:       plan.AccessLoggingConfig.Region.ValueString(),
@@ -303,16 +294,8 @@ func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*byt
 		}
 	}
 	if plan.MetricsConfig != nil {
-		requestData.MetricsConfig = struct {
-			Cloudwatch struct {
-				IamRoleArn string `json:"iam_role_arn"`
-				Region     string `json:"region"`
-			} `json:"cloudwatch"`
-		}{
-			Cloudwatch: struct {
-				IamRoleArn string `json:"iam_role_arn"`
-				Region     string `json:"region"`
-			}{
+		requestData.MetricsConfig = &ObjectStoreMetricsConfig{
+			Cloudwatch: &ObjectStoreCloudwatchMetricsConfig{
 				IamRoleArn: plan.MetricsConfig.IamRoleArn.ValueString(),
 				Region:     plan.MetricsConfig.Region.ValueString(),
 			},
@@ -339,12 +322,9 @@ func makeCreateObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStore
 	if err != nil {
 		return err
 	}
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		err = httpResp.Body.Close()
-		if err != nil {
-			return err
-		}
 		return fmt.Errorf("unable to create object store, got non-200 response: %s %s", httpResp.Status, string(body))
 	}
 	return nil
@@ -366,18 +346,31 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
-	if err != nil {
-		resp.Diagnostics.AddError("Create Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-		return
+	// Create and allow retrying up to 3 times in case of eventual consistency issues
+	// with the Valkey Cluster or IAM roles coming online.
+	createAttempt := 0
+	var lastErr error
+	for createAttempt < 4 {
+		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
+		if err != nil {
+			resp.Diagnostics.AddError("Create Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+			return
+		}
+		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+			lastErr = err
+		} else {
+			lastErr = nil
+			break
+		}
+		createAttempt++
+		time.Sleep(10 * time.Second)
 	}
-
-	if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+	if lastErr != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Object Store",
 			fmt.Sprintf("An unexpected error occurred when creating the object store. "+
 				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Create Error: %s", err),
+				"Create Error: %s", lastErr),
 		)
 		return
 	}
@@ -448,14 +441,14 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	}
 	state.S3IamRoleArn = types.StringValue(foundObjectStore.StorageConfig.S3.IamRoleArn)
 	state.ValkeyClusterName = types.StringValue(foundObjectStore.CacheConfig.ValkeyCluster.ClusterName)
-	if foundObjectStore.AccessLoggingConfig.Cloudwatch.LogGroupName != "" {
+	if foundObjectStore.AccessLoggingConfig != nil && foundObjectStore.AccessLoggingConfig.Cloudwatch != nil {
 		state.AccessLoggingConfig = &AccessLoggingConfig{
 			LogGroupName: types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.LogGroupName),
 			IamRoleArn:   types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.IamRoleArn),
 			Region:       types.StringValue(foundObjectStore.AccessLoggingConfig.Cloudwatch.Region),
 		}
 	}
-	if foundObjectStore.MetricsConfig.Cloudwatch.IamRoleArn != "" {
+	if foundObjectStore.MetricsConfig != nil && foundObjectStore.MetricsConfig.Cloudwatch != nil {
 		state.MetricsConfig = &MetricsConfig{
 			IamRoleArn: types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.IamRoleArn),
 			Region:     types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.Region),
@@ -513,6 +506,25 @@ func (r *ObjectStoreResource) ImportState(ctx context.Context, req resource.Impo
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
+type ObjectStoreCloudwatchMetricsConfig struct {
+	IamRoleArn string `json:"iam_role_arn"`
+	Region     string `json:"region"`
+}
+
+type ObjectStoreMetricsConfig struct {
+	Cloudwatch *ObjectStoreCloudwatchMetricsConfig `json:"cloudwatch,omitempty"`
+}
+
+type ObjectStoreCloudwatchAccessLoggingConfig struct {
+	LogGroupName string `json:"log_group_name"`
+	IamRoleArn   string `json:"iam_role_arn"`
+	Region       string `json:"region"`
+}
+
+type ObjectStoreAccessLoggingConfig struct {
+	Cloudwatch *ObjectStoreCloudwatchAccessLoggingConfig `json:"cloudwatch,omitempty"`
+}
+
 type DescribeObjectStoresResponseData struct {
 	Name          string `json:"name"`
 	StorageConfig struct {
@@ -527,19 +539,8 @@ type DescribeObjectStoresResponseData struct {
 			ClusterName string `json:"cluster_name"`
 		} `json:"valkey_cluster"`
 	} `json:"cache_config"`
-	AccessLoggingConfig struct {
-		Cloudwatch struct {
-			LogGroupName string `json:"log_group_name"`
-			IamRoleArn   string `json:"iam_role_arn"`
-			Region       string `json:"region"`
-		} `json:"cloudwatch"`
-	} `json:"access_logging_config"`
-	MetricsConfig struct {
-		Cloudwatch struct {
-			IamRoleArn string `json:"iam_role_arn"`
-			Region     string `json:"region"`
-		} `json:"cloudwatch"`
-	} `json:"metrics_config"`
+	AccessLoggingConfig *ObjectStoreAccessLoggingConfig `json:"access_logging_config,omitempty"`
+	MetricsConfig       *ObjectStoreMetricsConfig       `json:"metrics_config,omitempty"`
 }
 
 func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeObjectStoresResponseData, error) {
@@ -552,12 +553,9 @@ func findObjectStore(client http.Client, name string, httpEndpoint string, httpA
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = getResp.Body.Close() }()
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
-		err = getResp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("unable to close HTTP response body, got error: %s", err)
-		}
 		return nil, fmt.Errorf("unable to list object store, got non-200 response: %s %s", getResp.Status, string(body))
 	}
 
