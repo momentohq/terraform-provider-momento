@@ -341,53 +341,9 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
 	defer cancel()
 
-	client := *r.httpClient
-	deleteUrl := fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, state.ClusterName.ValueString())
-	deleteRequest, err := http.NewRequest("DELETE", deleteUrl, nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to delete valkey cluster, got error: %s", err))
+	if err := r.deleteClusterAndPollUntilGone(ctx, state.ClusterName.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Cluster Deletion Failed", fmt.Sprintf("Cluster \"%s\" deletion failed with error: %s. You may need to manually delete the cluster.", state.ClusterName.ValueString(), err.Error()))
 		return
-	}
-	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
-	httpResp, err := client.Do(deleteRequest)
-
-	// Once delete is initiated, we want to keep polling describeValkeyCluster until we get a 404 not found response.
-	// There may be transient server errors during cluster deletion, so log any other errors received but do not stop polling.
-
-	if httpResp != nil && httpResp.StatusCode == 404 {
-		resp.Diagnostics.AddWarning("Cluster Not Found", fmt.Sprintf("Cluster with name \"%s\" not found, assuming already deleted", state.ClusterName.ValueString()))
-		return
-	}
-
-	if err != nil {
-		resp.Diagnostics.AddWarning("Delete Request Error", fmt.Sprintf("Error: %s. Continuing to poll until cluster not found", err))
-	}
-	if httpResp != nil && httpResp.StatusCode >= 300 {
-		resp.Diagnostics.AddWarning("Delete Request Error", fmt.Sprintf("Received non-200 response: %d. Continuing to poll until cluster not found", httpResp.StatusCode))
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			// Context has been cancelled, stop polling
-			return
-		default:
-			time.Sleep(1 * time.Minute)
-			describeRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, state.ClusterName.ValueString()), nil)
-			if err != nil {
-				resp.Diagnostics.AddError("Unable to create describe request", fmt.Sprintf("Unable to poll cluster until deletion confirmed, got error: %s", err))
-				return
-			}
-			describeRequest.Header.Set("Authorization", r.httpAuthToken)
-			describeResp, err := client.Do(describeRequest)
-			if describeResp != nil && describeResp.StatusCode == 404 {
-				return
-			} else if err != nil {
-				resp.Diagnostics.AddWarning("Describe after delete error", fmt.Sprintf("Error: %s. Continuing to poll until cluster not found", err))
-			} else if describeResp != nil && describeResp.StatusCode >= 300 {
-				resp.Diagnostics.AddWarning("Describe after delete error", fmt.Sprintf("Received non-200 response: %d. Continuing to poll until cluster not found", describeResp.StatusCode))
-			}
-		}
 	}
 }
 
@@ -404,8 +360,13 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 	// Find valkey cluster
 	client := *r.httpClient
 	foundCluster, err := describeValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err == nil && foundCluster == nil {
+		resp.Diagnostics.AddWarning("Cluster Not Found", fmt.Sprintf("Cluster with name \"%s\" not found, removing from state", state.ClusterName.ValueString()))
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list valkey clusters, got error: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster, got error: %s", err))
 		return
 	}
 	if foundCluster == nil {
@@ -944,18 +905,70 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 	return nil
 }
 
+func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Context, clusterName string) error {
+	client := *r.httpClient
+	deleteRequest, err := http.NewRequest("DELETE", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, clusterName), nil)
+	if err != nil {
+		return err
+	}
+	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
+	httpResp, err := client.Do(deleteRequest)
+	if httpResp != nil && httpResp.Body != nil {
+		_ = httpResp.Body.Close()
+	}
+	if err == nil && httpResp != nil && httpResp.StatusCode == 404 {
+		// If the cluster is already gone, no need to poll
+		return nil
+	}
+
+	// Poll until the cluster is confirmed deleted (404)
+	// There may be transient server errors during cluster deletion, so ignore non-404 errors and keep polling
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			describeRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, clusterName), nil)
+			if err != nil {
+				continue
+			}
+			describeRequest.Header.Set("Authorization", r.httpAuthToken)
+			describeResp, err := client.Do(describeRequest)
+			if describeResp != nil && describeResp.Body != nil {
+				_ = describeResp.Body.Close()
+				if err == nil && describeResp.StatusCode == 404 {
+					return nil
+				}
+			}
+		}
+	}
+}
+
 func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clusterName string, resp *resource.CreateResponse) {
-	// Poll until cluster status is "Active", log any other errors but do not stop polling
+	// Poll until cluster status is "Active" or "CreationFailed", log any other errors but do not stop polling
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			// Context has been cancelled, stop polling
 			return
-		default:
-			time.Sleep(1 * time.Minute)
+		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if foundCluster != nil && foundCluster.Status == "Active" {
 				return
+			} else if foundCluster != nil && foundCluster.Status == "CreationFailed" {
+				if err := r.deleteClusterAndPollUntilGone(ctx, clusterName); err != nil {
+					resp.Diagnostics.AddError("Cluster Deletion Failed", fmt.Sprintf("Cluster \"%s\" failed to create and an attempt was made to delete it, but deletion failed with error: %s. You may need to manually delete the cluster before attempting another creation.", clusterName, err.Error()))
+					return
+				}
+				resp.Diagnostics.AddError("Cluster Creation Failed", fmt.Sprintf("Cluster \"%s\" failed to create and has been deleted. Please try creating the resource again.", clusterName))
+				resp.State.RemoveResource(ctx)
+				return
+			} else if err == nil && foundCluster == nil {
+				// cluster not found, which could be a transient state during creation before the cluster is fully registered, keep polling
 			} else if err != nil || foundCluster == nil {
 				resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
 			}
@@ -965,13 +978,14 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 
 func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string, resp *resource.UpdateResponse) {
 	// Poll until cluster status is "Active", log any other errors but do not stop polling
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			// Context has been cancelled, stop polling
 			return
-		default:
-			time.Sleep(1 * time.Minute)
+		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if foundCluster != nil && foundCluster.Status == "Active" {
 				return
@@ -1013,6 +1027,10 @@ func describeValkeyCluster(client http.Client, name string, httpEndpoint string,
 		return nil, err
 	}
 	defer func() { _ = getResp.Body.Close() }()
+	// Do not error if 404 not found
+	if getResp.StatusCode == 404 {
+		return nil, nil
+	}
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
 		return nil, fmt.Errorf("unable to list valkey cluster, got non-200 response: %s %s", getResp.Status, string(body))
