@@ -342,7 +342,7 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	defer cancel()
 
 	if err := r.deleteClusterAndPollUntilGone(ctx, state.ClusterName.ValueString()); err != nil {
-		resp.Diagnostics.AddError("Cluster Deletion Failed", fmt.Sprintf("Cluster \"%s\" failed to create and an attempt was made to delete it, but deletion failed with error: %s. You may need to manually delete the cluster.", state.ClusterName.ValueString(), err.Error()))
+		resp.Diagnostics.AddError("Cluster Deletion Failed", fmt.Sprintf("Cluster \"%s\" deletion failed with error: %s. You may need to manually delete the cluster.", state.ClusterName.ValueString(), err.Error()))
 		return
 	}
 }
@@ -913,7 +913,9 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 	}
 	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
 	httpResp, err := client.Do(deleteRequest)
-	defer func() { _ = httpResp.Body.Close() }()
+	if httpResp != nil && httpResp.Body != nil {
+		_ = httpResp.Body.Close()
+	}
 	if err == nil && httpResp != nil && httpResp.StatusCode == 404 {
 		// If the cluster is already gone, no need to poll
 		return nil
@@ -926,7 +928,7 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case <-ticker.C:
 			describeRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, clusterName), nil)
 			if err != nil {
@@ -934,9 +936,9 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 			}
 			describeRequest.Header.Set("Authorization", r.httpAuthToken)
 			describeResp, err := client.Do(describeRequest)
-			if err == nil && describeResp != nil {
+			if describeResp != nil && describeResp.Body != nil {
 				_ = describeResp.Body.Close()
-				if describeResp.StatusCode == 404 {
+				if err == nil && describeResp.StatusCode == 404 {
 					return nil
 				}
 			}
