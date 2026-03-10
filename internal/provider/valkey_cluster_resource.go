@@ -934,9 +934,11 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 			}
 			describeRequest.Header.Set("Authorization", r.httpAuthToken)
 			describeResp, err := client.Do(describeRequest)
-			if err == nil && describeResp != nil && describeResp.StatusCode == 404 {
+			if err == nil && describeResp != nil {
 				_ = describeResp.Body.Close()
-				return nil
+				if describeResp.StatusCode == 404 {
+					return nil
+				}
 			}
 		}
 	}
