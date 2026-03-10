@@ -341,7 +341,10 @@ func (r *ValkeyClusterResource) Delete(ctx context.Context, req resource.DeleteR
 	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
 	defer cancel()
 
-	r.deleteClusterAndPollUntilGone(ctx, state.ClusterName.ValueString())
+	if err := r.deleteClusterAndPollUntilGone(ctx, state.ClusterName.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Cluster Deletion Failed", fmt.Sprintf("Cluster \"%s\" failed to create and an attempt was made to delete it, but deletion failed with error: %s. You may need to manually delete the cluster.", state.ClusterName.ValueString(), err.Error()))
+		return
+	}
 }
 
 func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -902,33 +905,38 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 	return nil
 }
 
-func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Context, clusterName string) {
+func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Context, clusterName string) error {
 	client := *r.httpClient
 	deleteRequest, err := http.NewRequest("DELETE", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, clusterName), nil)
-	if err == nil {
-		deleteRequest.Header.Set("Authorization", r.httpAuthToken)
+	if err != nil {
+		return err
+	}
+	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
+	httpResp, err := client.Do(deleteRequest)
+	defer func() { _ = httpResp.Body.Close() }()
+	if err == nil && httpResp != nil && httpResp.StatusCode == 404 {
 		// If the cluster is already gone, no need to poll
-		if httpResp, err := client.Do(deleteRequest); err == nil && httpResp != nil && httpResp.StatusCode == 404 {
-			return
-		}
+		return nil
 	}
 
 	// Poll until the cluster is confirmed deleted (404)
 	// There may be transient server errors during cluster deletion, so ignore non-404 errors and keep polling
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		default:
-			time.Sleep(1 * time.Minute)
+			return nil
+		case <-ticker.C:
 			describeRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", r.httpEndpoint, clusterName), nil)
 			if err != nil {
 				continue
 			}
 			describeRequest.Header.Set("Authorization", r.httpAuthToken)
 			describeResp, err := client.Do(describeRequest)
+			defer func() { _ = describeResp.Body.Close() }()
 			if err == nil && describeResp != nil && describeResp.StatusCode == 404 {
-				return
+				return nil
 			}
 		}
 	}
@@ -936,21 +944,27 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 
 func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clusterName string, resp *resource.CreateResponse) {
 	// Poll until cluster status is "Active" or "CreationFailed", log any other errors but do not stop polling
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			// Context has been cancelled, stop polling
 			return
-		default:
-			time.Sleep(1 * time.Minute)
+		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if foundCluster != nil && foundCluster.Status == "Active" {
 				return
 			} else if foundCluster != nil && foundCluster.Status == "CreationFailed" {
-				r.deleteClusterAndPollUntilGone(ctx, clusterName)
+				if err := r.deleteClusterAndPollUntilGone(ctx, clusterName); err != nil {
+					resp.Diagnostics.AddError("Cluster Deletion Failed", fmt.Sprintf("Cluster \"%s\" failed to create and an attempt was made to delete it, but deletion failed with error: %s. You may need to manually delete the cluster before attempting another creation.", clusterName, err.Error()))
+					return
+				}
 				resp.Diagnostics.AddError("Cluster Creation Failed", fmt.Sprintf("Cluster \"%s\" failed to create and has been deleted. Please try creating the resource again.", clusterName))
 				resp.State.RemoveResource(ctx)
 				return
+			} else if err == nil && foundCluster == nil {
+				// cluster not found, which could be a transient state during creation before the cluster is fully registered, keep polling
 			} else if err != nil || foundCluster == nil {
 				resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
 			}
@@ -960,13 +974,14 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 
 func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string, resp *resource.UpdateResponse) {
 	// Poll until cluster status is "Active", log any other errors but do not stop polling
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			// Context has been cancelled, stop polling
 			return
-		default:
-			time.Sleep(1 * time.Minute)
+		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if foundCluster != nil && foundCluster.Status == "Active" {
 				return
