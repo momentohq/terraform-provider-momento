@@ -365,7 +365,12 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			break
 		}
 		createAttempt++
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddError("Create Cancelled", fmt.Sprintf("Context cancelled while waiting to retry object store creation: %s", ctx.Err()))
+			return
+		case <-ticker.C:
+		}
 	}
 	if lastErr != nil {
 		resp.Diagnostics.AddError(
@@ -437,7 +442,7 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list object stores, got error: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read object store, got error: %s", err))
 		return
 	}
 
@@ -504,7 +509,12 @@ func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateReq
 			break
 		}
 		updateAttempt++
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddError("Update Cancelled", fmt.Sprintf("Context cancelled while waiting to retry object store update: %s", ctx.Err()))
+			return
+		case <-ticker.C:
+		}
 	}
 	if lastErr != nil {
 		resp.Diagnostics.AddError(
@@ -580,7 +590,7 @@ func describeObjectStore(client http.Client, name string, httpEndpoint string, h
 	}
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
-		return nil, fmt.Errorf("unable to list object store, got non-200 response: %s %s", getResp.Status, string(body))
+		return nil, fmt.Errorf("unable to describe object store, got non-2xx response: %s %s", getResp.Status, string(body))
 	}
 
 	bodyBytes, err := io.ReadAll(getResp.Body)
