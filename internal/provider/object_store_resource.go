@@ -427,6 +427,12 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	// Find object store
 	client := *r.httpClient
 	foundObjectStore, err := findObjectStore(client, state.Name.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if foundObjectStore == nil && err == nil {
+		// Object store not found, remove from state
+		resp.Diagnostics.AddWarning("Object Store Not Found", fmt.Sprintf("The object store with name \"%s\" was not found. It may have been deleted outside of Terraform. Removing from state.", state.Name.ValueString()))
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list object stores, got error: %s", err))
 		return
@@ -570,6 +576,9 @@ func findObjectStore(client http.Client, name string, httpEndpoint string, httpA
 		return nil, err
 	}
 	defer func() { _ = getResp.Body.Close() }()
+	if getResp.StatusCode == 404 {
+		return nil, nil
+	}
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
 		return nil, fmt.Errorf("unable to list object store, got non-200 response: %s %s", getResp.Status, string(body))
