@@ -253,7 +253,7 @@ func validateCreateObjectStoreTerraformPlan(plan *ObjectStoreResourceModel) *Att
 }
 
 func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*bytes.Buffer, error) {
-	requestData := DescribeObjectStoresResponseData{
+	requestData := ObjectStoreData{
 		Name: plan.Name.ValueString(),
 		StorageConfig: struct {
 			S3 struct {
@@ -547,7 +547,7 @@ type ObjectStoreAccessLoggingConfig struct {
 	Cloudwatch *ObjectStoreCloudwatchAccessLoggingConfig `json:"cloudwatch,omitempty"`
 }
 
-type DescribeObjectStoresResponseData struct {
+type ObjectStoreData struct {
 	Name          string `json:"name"`
 	StorageConfig struct {
 		S3 struct {
@@ -565,7 +565,7 @@ type DescribeObjectStoresResponseData struct {
 	MetricsConfig       *ObjectStoreMetricsConfig       `json:"metrics_config,omitempty"`
 }
 
-func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeObjectStoresResponseData, error) {
+func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ObjectStoreData, error) {
 	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/objectstore/%s", httpEndpoint, name), nil)
 	if err != nil {
 		return nil, err
@@ -589,7 +589,7 @@ func findObjectStore(client http.Client, name string, httpEndpoint string, httpA
 		return nil, fmt.Errorf("error reading response body: %v", err)
 	}
 
-	var objectStore DescribeObjectStoresResponseData
+	var objectStore ObjectStoreData
 	err = json.Unmarshal(bodyBytes, &objectStore)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
