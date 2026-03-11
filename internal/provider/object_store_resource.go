@@ -404,6 +404,7 @@ func (r *ObjectStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
 
 	httpResp, err := client.Do(deleteRequest)
+	defer func() { _ = httpResp.Body.Close() }()
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got error: %s", err))
 		return
