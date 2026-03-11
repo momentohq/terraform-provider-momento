@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.1...v0.5.2) (2026-03-10)
+
+
+### Bug Fixes
+
+* error handling for CreationFailed status ([#70](https://github.com/momentohq/terraform-provider-momento/issues/70)) ([0548ee1](https://github.com/momentohq/terraform-provider-momento/commit/0548ee176a6e3731283dd4298e4723c376bfed5a))
+
 ## [0.5.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.0...v0.5.1) (2026-03-09)
 
 
