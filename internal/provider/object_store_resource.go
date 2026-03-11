@@ -348,6 +348,8 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 
 	// Create and allow retrying up to 3 times in case of eventual consistency issues
 	// with the Valkey Cluster or IAM roles coming online.
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	createAttempt := 0
 	var lastErr error
 	for createAttempt < 4 {
@@ -363,7 +365,7 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			break
 		}
 		createAttempt++
-		time.Sleep(10 * time.Second)
+		<-ticker.C
 	}
 	if lastErr != nil {
 		resp.Diagnostics.AddError(
@@ -479,18 +481,32 @@ func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
-	if err != nil {
-		resp.Diagnostics.AddError("Update Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-		return
+	// Update and allow retrying up to 3 times in case of transient errors
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	updateAttempt := 0
+	var lastErr error
+	for updateAttempt < 4 {
+		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
+		if err != nil {
+			resp.Diagnostics.AddError("Update Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+			return
+		}
+		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+			lastErr = err
+		} else {
+			lastErr = nil
+			break
+		}
+		updateAttempt++
+		<-ticker.C
 	}
-
-	if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+	if lastErr != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Update Object Store",
 			fmt.Sprintf("An unexpected error occurred when updating the object store. "+
 				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Update Error: %s", err),
+				"Update Error: %s", lastErr),
 		)
 		return
 	}
