@@ -404,10 +404,12 @@ func (r *ObjectStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
 
 	httpResp, err := client.Do(deleteRequest)
-	defer func() { _ = httpResp.Body.Close() }()
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got error: %s", err))
 		return
+	}
+	if httpResp != nil && httpResp.Body != nil {
+		_ = httpResp.Body.Close()
 	}
 	if httpResp.StatusCode >= 300 {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got non-200 response: %d", httpResp.StatusCode))
@@ -427,7 +429,7 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 
 	// Find object store
 	client := *r.httpClient
-	foundObjectStore, err := findObjectStore(client, state.Name.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	foundObjectStore, err := describeObjectStore(client, state.Name.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if foundObjectStore == nil && err == nil {
 		// Object store not found, remove from state
 		resp.Diagnostics.AddWarning("Object Store Not Found", fmt.Sprintf("The object store with name \"%s\" was not found. It may have been deleted outside of Terraform. Removing from state.", state.Name.ValueString()))
@@ -436,10 +438,6 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list object stores, got error: %s", err))
-		return
-	}
-	if foundObjectStore == nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read object store, object store with name \"%s\" not found", state.Name.ValueString()))
 		return
 	}
 
@@ -566,7 +564,7 @@ type ObjectStoreData struct {
 	MetricsConfig       *ObjectStoreMetricsConfig       `json:"metrics_config,omitempty"`
 }
 
-func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ObjectStoreData, error) {
+func describeObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ObjectStoreData, error) {
 	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/objectstore/%s", httpEndpoint, name), nil)
 	if err != nil {
 		return nil, err
