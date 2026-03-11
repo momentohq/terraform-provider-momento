@@ -253,7 +253,7 @@ func validateCreateObjectStoreTerraformPlan(plan *ObjectStoreResourceModel) *Att
 }
 
 func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*bytes.Buffer, error) {
-	requestData := DescribeObjectStoresResponseData{
+	requestData := ObjectStoreData{
 		Name: plan.Name.ValueString(),
 		StorageConfig: struct {
 			S3 struct {
@@ -348,6 +348,8 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 
 	// Create and allow retrying up to 3 times in case of eventual consistency issues
 	// with the Valkey Cluster or IAM roles coming online.
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	createAttempt := 0
 	var lastErr error
 	for createAttempt < 4 {
@@ -363,7 +365,12 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 			break
 		}
 		createAttempt++
-		time.Sleep(10 * time.Second)
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddError("Create Cancelled", fmt.Sprintf("Context cancelled while waiting to retry object store creation: %s", ctx.Err()))
+			return
+		case <-ticker.C:
+		}
 	}
 	if lastErr != nil {
 		resp.Diagnostics.AddError(
@@ -406,6 +413,9 @@ func (r *ObjectStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got error: %s", err))
 		return
 	}
+	if httpResp != nil && httpResp.Body != nil {
+		_ = httpResp.Body.Close()
+	}
 	if httpResp.StatusCode >= 300 {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got non-200 response: %d", httpResp.StatusCode))
 		return
@@ -424,13 +434,15 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 
 	// Find object store
 	client := *r.httpClient
-	foundObjectStore, err := findObjectStore(client, state.Name.ValueString(), r.httpEndpoint, r.httpAuthToken)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list object stores, got error: %s", err))
+	foundObjectStore, err := describeObjectStore(client, state.Name.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if foundObjectStore == nil && err == nil {
+		// Object store not found, remove from state
+		resp.Diagnostics.AddWarning("Object Store Not Found", fmt.Sprintf("The object store with name \"%s\" was not found. It may have been deleted outside of Terraform. Removing from state.", state.Name.ValueString()))
+		resp.State.RemoveResource(ctx)
 		return
 	}
-	if foundObjectStore == nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read object store, object store with name \"%s\" not found", state.Name.ValueString()))
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read object store, got error: %s", err))
 		return
 	}
 
@@ -479,18 +491,37 @@ func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
-	if err != nil {
-		resp.Diagnostics.AddError("Update Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-		return
+	// Update and allow retrying up to 3 times in case of transient errors
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	updateAttempt := 0
+	var lastErr error
+	for updateAttempt < 4 {
+		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
+		if err != nil {
+			resp.Diagnostics.AddError("Update Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
+			return
+		}
+		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+			lastErr = err
+		} else {
+			lastErr = nil
+			break
+		}
+		updateAttempt++
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddError("Update Cancelled", fmt.Sprintf("Context cancelled while waiting to retry object store update: %s", ctx.Err()))
+			return
+		case <-ticker.C:
+		}
 	}
-
-	if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
+	if lastErr != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Update Object Store",
 			fmt.Sprintf("An unexpected error occurred when updating the object store. "+
 				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Update Error: %s", err),
+				"Update Error: %s", lastErr),
 		)
 		return
 	}
@@ -525,7 +556,7 @@ type ObjectStoreAccessLoggingConfig struct {
 	Cloudwatch *ObjectStoreCloudwatchAccessLoggingConfig `json:"cloudwatch,omitempty"`
 }
 
-type DescribeObjectStoresResponseData struct {
+type ObjectStoreData struct {
 	Name          string `json:"name"`
 	StorageConfig struct {
 		S3 struct {
@@ -543,7 +574,7 @@ type DescribeObjectStoresResponseData struct {
 	MetricsConfig       *ObjectStoreMetricsConfig       `json:"metrics_config,omitempty"`
 }
 
-func findObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeObjectStoresResponseData, error) {
+func describeObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ObjectStoreData, error) {
 	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/objectstore/%s", httpEndpoint, name), nil)
 	if err != nil {
 		return nil, err
@@ -554,9 +585,12 @@ func findObjectStore(client http.Client, name string, httpEndpoint string, httpA
 		return nil, err
 	}
 	defer func() { _ = getResp.Body.Close() }()
+	if getResp.StatusCode == 404 {
+		return nil, nil
+	}
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
-		return nil, fmt.Errorf("unable to list object store, got non-200 response: %s %s", getResp.Status, string(body))
+		return nil, fmt.Errorf("unable to describe object store, got non-2xx response: %s %s", getResp.Status, string(body))
 	}
 
 	bodyBytes, err := io.ReadAll(getResp.Body)
@@ -564,7 +598,7 @@ func findObjectStore(client http.Client, name string, httpEndpoint string, httpA
 		return nil, fmt.Errorf("error reading response body: %v", err)
 	}
 
-	var objectStore DescribeObjectStoresResponseData
+	var objectStore ObjectStoreData
 	err = json.Unmarshal(bodyBytes, &objectStore)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
