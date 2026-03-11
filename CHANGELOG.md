@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.2...v0.5.3) (2026-03-11)
+
+
+### Bug Fixes
+
+* update object store retry loop ([#72](https://github.com/momentohq/terraform-provider-momento/issues/72)) ([5f3bd6d](https://github.com/momentohq/terraform-provider-momento/commit/5f3bd6da84e9daec5d1fb10fce00784118653f1c))
+
 ## [0.5.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.1...v0.5.2) (2026-03-10)
 
 
