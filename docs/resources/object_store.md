@@ -67,10 +67,13 @@ resource "momento_object_store" "example" {
 - `access_logging_config` (Attributes) Optional configuration for access logging through CloudWatch. (see [below for nested schema](#nestedatt--access_logging_config))
 - `metrics_config` (Attributes) Optional configuration for exporting CloudWatch metrics. (see [below for nested schema](#nestedatt--metrics_config))
 - `s3_prefix` (String) Optional prefix path within the S3 bucket.
+- `throttling_limits` (Attributes) Optional configuration for request throttling limits. (see [below for nested schema](#nestedatt--throttling_limits))
 
 ### Read-Only
 
 - `id` (String) The ID of the Object Store.
+- `per_router_throttling_limits` (Attributes) The per-router-node throttling limits (aggregate limits divided by router_count) sent to the Momento API. (see [below for nested schema](#nestedatt--per_router_throttling_limits))
+- `router_count` (Number) The number of Momento router nodes backing this object store, computed from the /endpoints API.
 
 <a id="nestedatt--access_logging_config"></a>
 ### Nested Schema for `access_logging_config`
@@ -89,3 +92,25 @@ Required:
 
 - `iam_role_arn` (String) The ARN of the IAM role that Momento will assume to export metrics.
 - `region` (String) The AWS region where the metrics will be exported to.
+
+
+<a id="nestedatt--throttling_limits"></a>
+### Nested Schema for `throttling_limits`
+
+Optional:
+
+- `read_bytes_per_second` (Number) The maximum read throughput (bytes per second) that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+- `read_operations_per_second` (Number) The maximum number of read requests per second that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+- `write_bytes_per_second` (Number) The maximum write throughput (bytes per second) that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+- `write_operations_per_second` (Number) The maximum number of write requests per second that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+
+
+<a id="nestedatt--per_router_throttling_limits"></a>
+### Nested Schema for `per_router_throttling_limits`
+
+Read-Only:
+
+- `read_bytes_per_second` (Number)
+- `read_operations_per_second` (Number)
+- `write_bytes_per_second` (Number)
+- `write_operations_per_second` (Number)
