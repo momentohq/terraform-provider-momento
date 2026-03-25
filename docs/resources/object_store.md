@@ -28,7 +28,8 @@ resource "momento_valkey_cluster" "example" {
   }
 }
 
-# Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix, access_logging_config, and metrics_config) specified.
+# Creates a Momento object store in us-west-2 region with all optional configs
+# (s3_prefix, access_logging_config, metrics_config, and throttling_limits) specified.
 # Waits for the valkey cluster to be created first if creating both for the first time.
 resource "momento_object_store" "example" {
   name                = "object-store-name"
@@ -44,6 +45,12 @@ resource "momento_object_store" "example" {
   metrics_config = {
     iam_role_arn = "metrics-iam-role-arn"
     region       = "us-west-2"
+  }
+  throttling_limits = {
+    read_operations_per_second  = 1000
+    write_operations_per_second = 500
+    read_bytes_per_second       = 10485760 # 10 MB/s
+    write_bytes_per_second      = 5242880  # 5 MB/s
   }
   # Explicit dependency: Forces object store creation to wait for cluster creation
   depends_on = [
