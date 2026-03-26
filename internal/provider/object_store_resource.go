@@ -513,8 +513,14 @@ func (r *ObjectStoreResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	// Only relevant when throttling limits are configured.
+	// If throttling limits are being removed, clear the computed fields so they don't
+	// linger as stale non-null values in state.
 	if plan.ThrottlingLimits == nil {
+		if !state.RouterCount.IsNull() || !state.PerRouterThrottlingLimits.IsNull() {
+			plan.RouterCount = types.Int64Null()
+			plan.PerRouterThrottlingLimits = types.ObjectNull(perRouterThrottlingLimitsAttrTypes)
+			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+		}
 		return
 	}
 
@@ -528,10 +534,9 @@ func (r *ObjectStoreResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	if !state.RouterCount.IsNull() && !state.RouterCount.IsUnknown() && routerCount == state.RouterCount.ValueInt64() {
-		return
-	}
-
+	// Always compute and set per_router_throttling_limits so that the plan accurately reflects
+	// the post-apply values whenever throttling limits or router count change. The framework
+	// will suppress a diff when the computed values are identical to the current state.
 	plan.RouterCount = types.Int64Value(routerCount)
 	_, perRouterLimitsObj, err := computePerRouterLimits(ctx, plan.ThrottlingLimits, routerCount)
 	if err != nil {
@@ -563,11 +568,15 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to fetch router node count: %s", err))
 		return
 	}
-	plan.RouterCount = types.Int64Value(routerCount)
 	perRouterLimits, perRouterLimitsObj, err := computePerRouterLimits(ctx, plan.ThrottlingLimits, routerCount)
 	if err != nil {
 		resp.Diagnostics.AddError("Create Error", err.Error())
 		return
+	}
+	if plan.ThrottlingLimits != nil {
+		plan.RouterCount = types.Int64Value(routerCount)
+	} else {
+		plan.RouterCount = types.Int64Null()
 	}
 	plan.PerRouterThrottlingLimits = perRouterLimitsObj
 
@@ -664,7 +673,13 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 			Region:     types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.Region),
 		}
 	}
-	// router_count and per_router_throttling_limits are intentionally not updated here.
+	// throttling_limits is intentionally not updated from the API response. The API stores
+	// per-router limits (what was sent on the last apply), not the user-supplied aggregate limits.
+	// Since the aggregate→per-router division uses ceiling arithmetic, the original values cannot
+	// be recovered from the API. The last-applied Terraform config is authoritative; drift
+	// detection for throttling_limits is not supported via refresh.
+	//
+	// router_count and per_router_throttling_limits are also intentionally not updated here.
 	// They reflect the last-applied values so that ModifyPlan can detect router count
 	// changes and trigger an Update to push corrected per-router limits to the API.
 
@@ -697,11 +712,15 @@ func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateReq
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to fetch router node count: %s", err))
 		return
 	}
-	plan.RouterCount = types.Int64Value(routerCount)
 	perRouterLimits, perRouterLimitsObj, err := computePerRouterLimits(ctx, plan.ThrottlingLimits, routerCount)
 	if err != nil {
 		resp.Diagnostics.AddError("Update Error", err.Error())
 		return
+	}
+	if plan.ThrottlingLimits != nil {
+		plan.RouterCount = types.Int64Value(routerCount)
+	} else {
+		plan.RouterCount = types.Int64Null()
 	}
 	plan.PerRouterThrottlingLimits = perRouterLimitsObj
 
