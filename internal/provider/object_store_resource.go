@@ -473,7 +473,7 @@ func sendObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStoreResour
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("unable to create object store, got non-200 response: %s %s", httpResp.Status, string(body))
+		return fmt.Errorf("unable to create or update object store, got non-200 response: %s %s", httpResp.Status, string(body))
 	}
 	return nil
 }
