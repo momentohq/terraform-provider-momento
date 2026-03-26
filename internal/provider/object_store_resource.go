@@ -349,8 +349,11 @@ func validateObjectStorePlan(plan *ObjectStoreResourceModel) *AttributeError {
 }
 
 func computePerRouterLimits(ctx context.Context, aggregate *ThrottlingLimitsConfig, routerCount int64) (*ThrottlingLimitsConfig, types.Object, error) {
-	if aggregate == nil || routerCount <= 0 {
+	if aggregate == nil {
 		return nil, types.ObjectNull(perRouterThrottlingLimitsAttrTypes), nil
+	}
+	if routerCount <= 0 {
+		return nil, types.ObjectNull(perRouterThrottlingLimitsAttrTypes), fmt.Errorf("invalid router count %d for configured throttling limits; expected at least 1 router", routerCount)
 	}
 	perRouter := ThrottlingLimitsConfig{
 		ReadOperationsPerSecond:  types.Int64Null(),
@@ -436,19 +439,19 @@ func marshalObjectStoreRequest(plan *ObjectStoreResourceModel, perRouterLimits *
 	}
 	if perRouterLimits != nil {
 		limits := &ObjectStoreThrottlingLimits{}
-		if !perRouterLimits.ReadOperationsPerSecond.IsNull() {
+		if !perRouterLimits.ReadOperationsPerSecond.IsNull() && !perRouterLimits.ReadOperationsPerSecond.IsUnknown() {
 			v := perRouterLimits.ReadOperationsPerSecond.ValueInt64()
 			limits.ReadOperationsPerSecond = &v
 		}
-		if !perRouterLimits.WriteOperationsPerSecond.IsNull() {
+		if !perRouterLimits.WriteOperationsPerSecond.IsNull() && !perRouterLimits.WriteOperationsPerSecond.IsUnknown() {
 			v := perRouterLimits.WriteOperationsPerSecond.ValueInt64()
 			limits.WriteOperationsPerSecond = &v
 		}
-		if !perRouterLimits.ReadBytesPerSecond.IsNull() {
+		if !perRouterLimits.ReadBytesPerSecond.IsNull() && !perRouterLimits.ReadBytesPerSecond.IsUnknown() {
 			v := perRouterLimits.ReadBytesPerSecond.ValueInt64()
 			limits.ReadBytesPerSecond = &v
 		}
-		if !perRouterLimits.WriteBytesPerSecond.IsNull() {
+		if !perRouterLimits.WriteBytesPerSecond.IsNull() && !perRouterLimits.WriteBytesPerSecond.IsUnknown() {
 			v := perRouterLimits.WriteBytesPerSecond.ValueInt64()
 			limits.WriteBytesPerSecond = &v
 		}
@@ -481,7 +484,7 @@ func sendObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStoreResour
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("unable to create or update object store, got non-200 response: %s %s", httpResp.Status, string(body))
+		return fmt.Errorf("unable to create or update object store, got non-2xx response: %s %s", httpResp.Status, string(body))
 	}
 	return nil
 }
