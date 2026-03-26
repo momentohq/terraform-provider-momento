@@ -194,7 +194,7 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 			},
 			"per_router_throttling_limits": schema.SingleNestedAttribute{
-				MarkdownDescription: "The per-router-node throttling limits (aggregate limits divided by router_count) sent to the Momento API.",
+				MarkdownDescription: "The per-router-node throttling limits (ceiling of aggregate limits divided by router_count) sent to the Momento API.",
 				Computed:            true,
 				Attributes: map[string]schema.Attribute{
 					"read_operations_per_second": schema.Int64Attribute{
@@ -348,6 +348,10 @@ func validateObjectStorePlan(plan *ObjectStoreResourceModel) *AttributeError {
 	return nil
 }
 
+func ceilDiv(a, b int64) int64 {
+	return (a + b - 1) / b
+}
+
 func computePerRouterLimits(ctx context.Context, aggregate *ThrottlingLimitsConfig, routerCount int64) (*ThrottlingLimitsConfig, types.Object, error) {
 	if aggregate == nil {
 		return nil, types.ObjectNull(perRouterThrottlingLimitsAttrTypes), nil
@@ -364,22 +368,22 @@ func computePerRouterLimits(ctx context.Context, aggregate *ThrottlingLimitsConf
 	if aggregate.ReadOperationsPerSecond.IsUnknown() {
 		perRouter.ReadOperationsPerSecond = types.Int64Unknown()
 	} else if !aggregate.ReadOperationsPerSecond.IsNull() {
-		perRouter.ReadOperationsPerSecond = types.Int64Value(aggregate.ReadOperationsPerSecond.ValueInt64() / routerCount)
+		perRouter.ReadOperationsPerSecond = types.Int64Value(ceilDiv(aggregate.ReadOperationsPerSecond.ValueInt64(), routerCount))
 	}
 	if aggregate.WriteOperationsPerSecond.IsUnknown() {
 		perRouter.WriteOperationsPerSecond = types.Int64Unknown()
 	} else if !aggregate.WriteOperationsPerSecond.IsNull() {
-		perRouter.WriteOperationsPerSecond = types.Int64Value(aggregate.WriteOperationsPerSecond.ValueInt64() / routerCount)
+		perRouter.WriteOperationsPerSecond = types.Int64Value(ceilDiv(aggregate.WriteOperationsPerSecond.ValueInt64(), routerCount))
 	}
 	if aggregate.ReadBytesPerSecond.IsUnknown() {
 		perRouter.ReadBytesPerSecond = types.Int64Unknown()
 	} else if !aggregate.ReadBytesPerSecond.IsNull() {
-		perRouter.ReadBytesPerSecond = types.Int64Value(aggregate.ReadBytesPerSecond.ValueInt64() / routerCount)
+		perRouter.ReadBytesPerSecond = types.Int64Value(ceilDiv(aggregate.ReadBytesPerSecond.ValueInt64(), routerCount))
 	}
 	if aggregate.WriteBytesPerSecond.IsUnknown() {
 		perRouter.WriteBytesPerSecond = types.Int64Unknown()
 	} else if !aggregate.WriteBytesPerSecond.IsNull() {
-		perRouter.WriteBytesPerSecond = types.Int64Value(aggregate.WriteBytesPerSecond.ValueInt64() / routerCount)
+		perRouter.WriteBytesPerSecond = types.Int64Value(ceilDiv(aggregate.WriteBytesPerSecond.ValueInt64(), routerCount))
 	}
 	obj, diags := types.ObjectValueFrom(ctx, perRouterThrottlingLimitsAttrTypes, perRouter)
 	if diags.HasError() {
