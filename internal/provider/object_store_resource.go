@@ -358,16 +358,24 @@ func computePerRouterLimits(ctx context.Context, aggregate *ThrottlingLimitsConf
 		ReadBytesPerSecond:       types.Int64Null(),
 		WriteBytesPerSecond:      types.Int64Null(),
 	}
-	if !aggregate.ReadOperationsPerSecond.IsNull() {
+	if aggregate.ReadOperationsPerSecond.IsUnknown() {
+		perRouter.ReadOperationsPerSecond = types.Int64Unknown()
+	} else if !aggregate.ReadOperationsPerSecond.IsNull() {
 		perRouter.ReadOperationsPerSecond = types.Int64Value(aggregate.ReadOperationsPerSecond.ValueInt64() / routerCount)
 	}
-	if !aggregate.WriteOperationsPerSecond.IsNull() {
+	if aggregate.WriteOperationsPerSecond.IsUnknown() {
+		perRouter.WriteOperationsPerSecond = types.Int64Unknown()
+	} else if !aggregate.WriteOperationsPerSecond.IsNull() {
 		perRouter.WriteOperationsPerSecond = types.Int64Value(aggregate.WriteOperationsPerSecond.ValueInt64() / routerCount)
 	}
-	if !aggregate.ReadBytesPerSecond.IsNull() {
+	if aggregate.ReadBytesPerSecond.IsUnknown() {
+		perRouter.ReadBytesPerSecond = types.Int64Unknown()
+	} else if !aggregate.ReadBytesPerSecond.IsNull() {
 		perRouter.ReadBytesPerSecond = types.Int64Value(aggregate.ReadBytesPerSecond.ValueInt64() / routerCount)
 	}
-	if !aggregate.WriteBytesPerSecond.IsNull() {
+	if aggregate.WriteBytesPerSecond.IsUnknown() {
+		perRouter.WriteBytesPerSecond = types.Int64Unknown()
+	} else if !aggregate.WriteBytesPerSecond.IsNull() {
 		perRouter.WriteBytesPerSecond = types.Int64Value(aggregate.WriteBytesPerSecond.ValueInt64() / routerCount)
 	}
 	obj, diags := types.ObjectValueFrom(ctx, perRouterThrottlingLimitsAttrTypes, perRouter)
@@ -505,11 +513,15 @@ func (r *ObjectStoreResource) ModifyPlan(ctx context.Context, req resource.Modif
 
 	routerCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
 	if err != nil {
-		// Don't fail the plan on a transient error fetching router count.
+		// Don't fail the plan on a transient error fetching router count, but surface a warning.
+		resp.Diagnostics.AddWarning(
+			"Unable to fetch router count",
+			fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err),
+		)
 		return
 	}
 
-	if routerCount == state.RouterCount.ValueInt64() {
+	if !state.RouterCount.IsNull() && !state.RouterCount.IsUnknown() && routerCount == state.RouterCount.ValueInt64() {
 		return
 	}
 
