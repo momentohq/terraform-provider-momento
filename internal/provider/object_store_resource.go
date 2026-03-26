@@ -315,6 +315,36 @@ func validateObjectStorePlan(plan *ObjectStoreResourceModel) *AttributeError {
 			}
 		}
 	}
+	if plan.ThrottlingLimits != nil {
+		if !plan.ThrottlingLimits.ReadOperationsPerSecond.IsNull() && plan.ThrottlingLimits.ReadOperationsPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("read_operations_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Read operations per second must be a positive integer.",
+			}
+		}
+		if !plan.ThrottlingLimits.WriteOperationsPerSecond.IsNull() && plan.ThrottlingLimits.WriteOperationsPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("write_operations_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Write operations per second must be a positive integer.",
+			}
+		}
+		if !plan.ThrottlingLimits.ReadBytesPerSecond.IsNull() && plan.ThrottlingLimits.ReadBytesPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("read_bytes_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Read bytes per second must be a positive integer.",
+			}
+		}
+		if !plan.ThrottlingLimits.WriteBytesPerSecond.IsNull() && plan.ThrottlingLimits.WriteBytesPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("write_bytes_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Write bytes per second must be a positive integer.",
+			}
+		}
+	}
 	return nil
 }
 
