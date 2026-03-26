@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -21,8 +22,9 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource              = &ObjectStoreResource{}
-	_ resource.ResourceWithConfigure = &ObjectStoreResource{}
+	_ resource.Resource               = &ObjectStoreResource{}
+	_ resource.ResourceWithConfigure  = &ObjectStoreResource{}
+	_ resource.ResourceWithModifyPlan = &ObjectStoreResource{}
 )
 
 func NewObjectStoreResource() resource.Resource {
@@ -47,16 +49,33 @@ type MetricsConfig struct {
 	IamRoleArn types.String `tfsdk:"iam_role_arn"`
 }
 
+type ThrottlingLimitsConfig struct {
+	ReadOperationsPerSecond  types.Int64 `tfsdk:"read_operations_per_second"`
+	WriteOperationsPerSecond types.Int64 `tfsdk:"write_operations_per_second"`
+	ReadBytesPerSecond       types.Int64 `tfsdk:"read_bytes_per_second"`
+	WriteBytesPerSecond      types.Int64 `tfsdk:"write_bytes_per_second"`
+}
+
+var perRouterThrottlingLimitsAttrTypes = map[string]attr.Type{
+	"read_operations_per_second":  types.Int64Type,
+	"write_operations_per_second": types.Int64Type,
+	"read_bytes_per_second":       types.Int64Type,
+	"write_bytes_per_second":      types.Int64Type,
+}
+
 // ObjectStoreResourceModel describes the resource data model.
 type ObjectStoreResourceModel struct {
-	Id                  types.String         `tfsdk:"id"`
-	Name                types.String         `tfsdk:"name"`
-	S3BucketName        types.String         `tfsdk:"s3_bucket_name"`
-	S3Prefix            types.String         `tfsdk:"s3_prefix"`
-	S3IamRoleArn        types.String         `tfsdk:"s3_iam_role_arn"`
-	ValkeyClusterName   types.String         `tfsdk:"valkey_cluster_name"`
-	AccessLoggingConfig *AccessLoggingConfig `tfsdk:"access_logging_config"`
-	MetricsConfig       *MetricsConfig       `tfsdk:"metrics_config"`
+	Id                        types.String            `tfsdk:"id"`
+	Name                      types.String            `tfsdk:"name"`
+	S3BucketName              types.String            `tfsdk:"s3_bucket_name"`
+	S3Prefix                  types.String            `tfsdk:"s3_prefix"`
+	S3IamRoleArn              types.String            `tfsdk:"s3_iam_role_arn"`
+	ValkeyClusterName         types.String            `tfsdk:"valkey_cluster_name"`
+	AccessLoggingConfig       *AccessLoggingConfig    `tfsdk:"access_logging_config"`
+	MetricsConfig             *MetricsConfig          `tfsdk:"metrics_config"`
+	ThrottlingLimits          *ThrottlingLimitsConfig `tfsdk:"throttling_limits"`
+	PerRouterThrottlingLimits types.Object            `tfsdk:"per_router_throttling_limits"`
+	RouterCount               types.Int64             `tfsdk:"router_count"`
 }
 
 func (r *ObjectStoreResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -149,6 +168,53 @@ func (r *ObjectStoreResource) Schema(ctx context.Context, req resource.SchemaReq
 					},
 				},
 			},
+			"throttling_limits": schema.SingleNestedAttribute{
+				MarkdownDescription: "Optional configuration for request throttling limits.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.Object{
+					objectplanmodifier.UseStateForUnknown(),
+				},
+				Attributes: map[string]schema.Attribute{
+					"read_operations_per_second": schema.Int64Attribute{
+						MarkdownDescription: "The maximum number of read requests per second that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.",
+						Optional:            true,
+					},
+					"write_operations_per_second": schema.Int64Attribute{
+						MarkdownDescription: "The maximum number of write requests per second that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.",
+						Optional:            true,
+					},
+					"read_bytes_per_second": schema.Int64Attribute{
+						MarkdownDescription: "The maximum read throughput (bytes per second) that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.",
+						Optional:            true,
+					},
+					"write_bytes_per_second": schema.Int64Attribute{
+						MarkdownDescription: "The maximum write throughput (bytes per second) that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.",
+						Optional:            true,
+					},
+				},
+			},
+			"per_router_throttling_limits": schema.SingleNestedAttribute{
+				MarkdownDescription: "The per-router-node throttling limits (ceiling of aggregate limits divided by router_count) sent to the Momento API.",
+				Computed:            true,
+				Attributes: map[string]schema.Attribute{
+					"read_operations_per_second": schema.Int64Attribute{
+						Computed: true,
+					},
+					"write_operations_per_second": schema.Int64Attribute{
+						Computed: true,
+					},
+					"read_bytes_per_second": schema.Int64Attribute{
+						Computed: true,
+					},
+					"write_bytes_per_second": schema.Int64Attribute{
+						Computed: true,
+					},
+				},
+			},
+			"router_count": schema.Int64Attribute{
+				MarkdownDescription: "The number of Momento router nodes backing this object store, computed from the /endpoints API.",
+				Computed:            true,
+			},
 		},
 	}
 }
@@ -181,7 +247,7 @@ type AttributeError struct {
 	Detail        string
 }
 
-func validateCreateObjectStoreTerraformPlan(plan *ObjectStoreResourceModel) *AttributeError {
+func validateObjectStorePlan(plan *ObjectStoreResourceModel) *AttributeError {
 	if plan.Name.IsNull() || plan.Name.IsUnknown() || plan.Name.ValueString() == "" {
 		return &AttributeError{
 			AttributePath: path.Root("name"),
@@ -249,10 +315,84 @@ func validateCreateObjectStoreTerraformPlan(plan *ObjectStoreResourceModel) *Att
 			}
 		}
 	}
+	if plan.ThrottlingLimits != nil {
+		if !plan.ThrottlingLimits.ReadOperationsPerSecond.IsNull() && plan.ThrottlingLimits.ReadOperationsPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("read_operations_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Read operations per second must be a positive integer.",
+			}
+		}
+		if !plan.ThrottlingLimits.WriteOperationsPerSecond.IsNull() && plan.ThrottlingLimits.WriteOperationsPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("write_operations_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Write operations per second must be a positive integer.",
+			}
+		}
+		if !plan.ThrottlingLimits.ReadBytesPerSecond.IsNull() && plan.ThrottlingLimits.ReadBytesPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("read_bytes_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Read bytes per second must be a positive integer.",
+			}
+		}
+		if !plan.ThrottlingLimits.WriteBytesPerSecond.IsNull() && plan.ThrottlingLimits.WriteBytesPerSecond.ValueInt64() <= 0 {
+			return &AttributeError{
+				AttributePath: path.Root("throttling_limits").AtName("write_bytes_per_second"),
+				Summary:       "Invalid value",
+				Detail:        "Write bytes per second must be a positive integer.",
+			}
+		}
+	}
 	return nil
 }
 
-func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*bytes.Buffer, error) {
+func ceilDiv(a, b int64) int64 {
+	return (a + b - 1) / b
+}
+
+func computePerRouterLimits(ctx context.Context, aggregate *ThrottlingLimitsConfig, routerCount int64) (*ThrottlingLimitsConfig, types.Object, error) {
+	if aggregate == nil {
+		return nil, types.ObjectNull(perRouterThrottlingLimitsAttrTypes), nil
+	}
+	if routerCount <= 0 {
+		return nil, types.ObjectNull(perRouterThrottlingLimitsAttrTypes), fmt.Errorf("invalid router count %d for configured throttling limits; expected at least 1 router", routerCount)
+	}
+	perRouter := ThrottlingLimitsConfig{
+		ReadOperationsPerSecond:  types.Int64Null(),
+		WriteOperationsPerSecond: types.Int64Null(),
+		ReadBytesPerSecond:       types.Int64Null(),
+		WriteBytesPerSecond:      types.Int64Null(),
+	}
+	if aggregate.ReadOperationsPerSecond.IsUnknown() {
+		perRouter.ReadOperationsPerSecond = types.Int64Unknown()
+	} else if !aggregate.ReadOperationsPerSecond.IsNull() {
+		perRouter.ReadOperationsPerSecond = types.Int64Value(ceilDiv(aggregate.ReadOperationsPerSecond.ValueInt64(), routerCount))
+	}
+	if aggregate.WriteOperationsPerSecond.IsUnknown() {
+		perRouter.WriteOperationsPerSecond = types.Int64Unknown()
+	} else if !aggregate.WriteOperationsPerSecond.IsNull() {
+		perRouter.WriteOperationsPerSecond = types.Int64Value(ceilDiv(aggregate.WriteOperationsPerSecond.ValueInt64(), routerCount))
+	}
+	if aggregate.ReadBytesPerSecond.IsUnknown() {
+		perRouter.ReadBytesPerSecond = types.Int64Unknown()
+	} else if !aggregate.ReadBytesPerSecond.IsNull() {
+		perRouter.ReadBytesPerSecond = types.Int64Value(ceilDiv(aggregate.ReadBytesPerSecond.ValueInt64(), routerCount))
+	}
+	if aggregate.WriteBytesPerSecond.IsUnknown() {
+		perRouter.WriteBytesPerSecond = types.Int64Unknown()
+	} else if !aggregate.WriteBytesPerSecond.IsNull() {
+		perRouter.WriteBytesPerSecond = types.Int64Value(ceilDiv(aggregate.WriteBytesPerSecond.ValueInt64(), routerCount))
+	}
+	obj, diags := types.ObjectValueFrom(ctx, perRouterThrottlingLimitsAttrTypes, perRouter)
+	if diags.HasError() {
+		return nil, types.ObjectNull(perRouterThrottlingLimitsAttrTypes), fmt.Errorf("error building per-router throttling limits object: %s", diags)
+	}
+	return &perRouter, obj, nil
+}
+
+func marshalObjectStoreRequest(plan *ObjectStoreResourceModel, perRouterLimits *ThrottlingLimitsConfig) (*bytes.Buffer, error) {
 	requestData := ObjectStoreData{
 		Name: plan.Name.ValueString(),
 		StorageConfig: struct {
@@ -301,6 +441,29 @@ func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*byt
 			},
 		}
 	}
+	if perRouterLimits != nil {
+		limits := &ObjectStoreThrottlingLimits{}
+		if !perRouterLimits.ReadOperationsPerSecond.IsNull() && !perRouterLimits.ReadOperationsPerSecond.IsUnknown() {
+			v := perRouterLimits.ReadOperationsPerSecond.ValueInt64()
+			limits.ReadOperationsPerSecond = &v
+		}
+		if !perRouterLimits.WriteOperationsPerSecond.IsNull() && !perRouterLimits.WriteOperationsPerSecond.IsUnknown() {
+			v := perRouterLimits.WriteOperationsPerSecond.ValueInt64()
+			limits.WriteOperationsPerSecond = &v
+		}
+		if !perRouterLimits.ReadBytesPerSecond.IsNull() && !perRouterLimits.ReadBytesPerSecond.IsUnknown() {
+			v := perRouterLimits.ReadBytesPerSecond.ValueInt64()
+			limits.ReadBytesPerSecond = &v
+		}
+		if !perRouterLimits.WriteBytesPerSecond.IsNull() && !perRouterLimits.WriteBytesPerSecond.IsUnknown() {
+			v := perRouterLimits.WriteBytesPerSecond.ValueInt64()
+			limits.WriteBytesPerSecond = &v
+		}
+		if limits.ReadOperationsPerSecond != nil || limits.WriteOperationsPerSecond != nil ||
+			limits.ReadBytesPerSecond != nil || limits.WriteBytesPerSecond != nil {
+			requestData.ThrottlingLimits = limits
+		}
+	}
 	requestJson, err := json.Marshal(requestData)
 	if err != nil {
 		return nil, err
@@ -309,7 +472,7 @@ func marshalCreateObjectStoreRequestToJson(plan *ObjectStoreResourceModel) (*byt
 	return requestBody, nil
 }
 
-func makeCreateObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStoreResource, requestBody *bytes.Buffer) error {
+func sendObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStoreResource, requestBody *bytes.Buffer) error {
 	client := *r.httpClient
 	putUrl := fmt.Sprintf("%s/objectstore/%s", r.httpEndpoint, plan.Name.ValueString())
 	putRequest, err := http.NewRequest("PUT", putUrl, requestBody)
@@ -325,9 +488,63 @@ func makeCreateObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStore
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("unable to create object store, got non-200 response: %s %s", httpResp.Status, string(body))
+		return fmt.Errorf("unable to create or update object store, got non-2xx response: %s %s", httpResp.Status, string(body))
 	}
 	return nil
+}
+
+// Will detect if router count has changed and produce a diff so that next terraform apply
+// will update the object store with new per-router throttling limits.
+func (r *ObjectStoreResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only run during updates: skip Create (state null), Delete (plan null), or unconfigured provider.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() || r.httpClient == nil {
+		return
+	}
+
+	var state ObjectStoreResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var plan ObjectStoreResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// If throttling limits are being removed, clear the computed fields so they don't
+	// linger as stale non-null values in state.
+	if plan.ThrottlingLimits == nil {
+		if !state.RouterCount.IsNull() || !state.PerRouterThrottlingLimits.IsNull() {
+			plan.RouterCount = types.Int64Null()
+			plan.PerRouterThrottlingLimits = types.ObjectNull(perRouterThrottlingLimitsAttrTypes)
+			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+		}
+		return
+	}
+
+	routerCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		// Don't fail the plan on a transient error fetching router count, but surface a warning.
+		resp.Diagnostics.AddWarning(
+			"Unable to fetch router count",
+			fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err),
+		)
+		return
+	}
+
+	// Always compute and set per_router_throttling_limits so that the plan accurately reflects
+	// the post-apply values whenever throttling limits or router count change. The framework
+	// will suppress a diff when the computed values are identical to the current state.
+	plan.RouterCount = types.Int64Value(routerCount)
+	_, perRouterLimitsObj, err := computePerRouterLimits(ctx, plan.ThrottlingLimits, routerCount)
+	if err != nil {
+		resp.Diagnostics.AddError("ModifyPlan Error", fmt.Sprintf("Unable to compute per-router throttling limits: %s", err))
+		return
+	}
+	plan.PerRouterThrottlingLimits = perRouterLimitsObj
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -340,45 +557,35 @@ func (r *ObjectStoreResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	validationErr := validateCreateObjectStoreTerraformPlan(&plan)
+	validationErr := validateObjectStorePlan(&plan)
 	if validationErr != nil {
 		resp.Diagnostics.AddAttributeError(validationErr.AttributePath, validationErr.Summary, validationErr.Detail)
 		return
 	}
 
+	routerCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to fetch router node count: %s", err))
+		return
+	}
+	perRouterLimits, perRouterLimitsObj, err := computePerRouterLimits(ctx, plan.ThrottlingLimits, routerCount)
+	if err != nil {
+		resp.Diagnostics.AddError("Create Error", err.Error())
+		return
+	}
+	if plan.ThrottlingLimits != nil {
+		plan.RouterCount = types.Int64Value(routerCount)
+	} else {
+		plan.RouterCount = types.Int64Null()
+	}
+	plan.PerRouterThrottlingLimits = perRouterLimitsObj
+
 	// Create and allow retrying up to 3 times in case of eventual consistency issues
 	// with the Valkey Cluster or IAM roles coming online.
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	createAttempt := 0
-	var lastErr error
-	for createAttempt < 4 {
-		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
-		if err != nil {
-			resp.Diagnostics.AddError("Create Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-			return
-		}
-		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
-			lastErr = err
-		} else {
-			lastErr = nil
-			break
-		}
-		createAttempt++
-		select {
-		case <-ctx.Done():
-			resp.Diagnostics.AddError("Create Cancelled", fmt.Sprintf("Context cancelled while waiting to retry object store creation: %s", ctx.Err()))
-			return
-		case <-ticker.C:
-		}
-	}
-	if lastErr != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Object Store",
+	if err = r.applyObjectStoreWithRetry(ctx, &plan, perRouterLimits); err != nil {
+		resp.Diagnostics.AddError("Unable to Create Object Store",
 			fmt.Sprintf("An unexpected error occurred when creating the object store. "+
-				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Create Error: %s", lastErr),
-		)
+				"If the error is not clear, please contact the provider developers.\n\nError: %s", err))
 		return
 	}
 
@@ -466,6 +673,15 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 			Region:     types.StringValue(foundObjectStore.MetricsConfig.Cloudwatch.Region),
 		}
 	}
+	// throttling_limits is intentionally not updated from the API response. The API stores
+	// per-router limits (what was sent on the last apply), not the user-supplied aggregate limits.
+	// Since the aggregate→per-router division uses ceiling arithmetic, the original values cannot
+	// be recovered from the API. The last-applied Terraform config is authoritative; drift
+	// detection for throttling_limits is not supported via refresh.
+	//
+	// router_count and per_router_throttling_limits are also intentionally not updated here.
+	// They reflect the last-applied values so that ModifyPlan can detect router count
+	// changes and trigger an Update to push corrected per-router limits to the API.
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -485,44 +701,34 @@ func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	validationErr := validateCreateObjectStoreTerraformPlan(&plan)
+	validationErr := validateObjectStorePlan(&plan)
 	if validationErr != nil {
 		resp.Diagnostics.AddAttributeError(validationErr.AttributePath, validationErr.Summary, validationErr.Detail)
 		return
 	}
 
-	// Update and allow retrying up to 3 times in case of transient errors
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	updateAttempt := 0
-	var lastErr error
-	for updateAttempt < 4 {
-		requestBody, err := marshalCreateObjectStoreRequestToJson(&plan)
-		if err != nil {
-			resp.Diagnostics.AddError("Update Error", fmt.Sprintf("Unable to marshal object store request to JSON, got error: %s", err))
-			return
-		}
-		if err = makeCreateObjectStoreRequest(&plan, r, requestBody); err != nil {
-			lastErr = err
-		} else {
-			lastErr = nil
-			break
-		}
-		updateAttempt++
-		select {
-		case <-ctx.Done():
-			resp.Diagnostics.AddError("Update Cancelled", fmt.Sprintf("Context cancelled while waiting to retry object store update: %s", ctx.Err()))
-			return
-		case <-ticker.C:
-		}
+	routerCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to fetch router node count: %s", err))
+		return
 	}
-	if lastErr != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Update Object Store",
+	perRouterLimits, perRouterLimitsObj, err := computePerRouterLimits(ctx, plan.ThrottlingLimits, routerCount)
+	if err != nil {
+		resp.Diagnostics.AddError("Update Error", err.Error())
+		return
+	}
+	if plan.ThrottlingLimits != nil {
+		plan.RouterCount = types.Int64Value(routerCount)
+	} else {
+		plan.RouterCount = types.Int64Null()
+	}
+	plan.PerRouterThrottlingLimits = perRouterLimitsObj
+
+	// Update and allow retrying up to 3 times in case of transient errors.
+	if err = r.applyObjectStoreWithRetry(ctx, &plan, perRouterLimits); err != nil {
+		resp.Diagnostics.AddError("Unable to Update Object Store",
 			fmt.Sprintf("An unexpected error occurred when updating the object store. "+
-				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Update Error: %s", lastErr),
-		)
+				"If the error is not clear, please contact the provider developers.\n\nError: %s", err))
 		return
 	}
 
@@ -531,6 +737,31 @@ func (r *ObjectStoreResource) Update(ctx context.Context, req resource.UpdateReq
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func (r *ObjectStoreResource) applyObjectStoreWithRetry(ctx context.Context, plan *ObjectStoreResourceModel, perRouterLimits *ThrottlingLimitsConfig) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	attempt := 0
+	var lastErr error
+	for attempt < 4 {
+		requestBody, err := marshalObjectStoreRequest(plan, perRouterLimits)
+		if err != nil {
+			return fmt.Errorf("unable to marshal object store request to JSON: %w", err)
+		}
+		if err = sendObjectStoreRequest(plan, r, requestBody); err != nil {
+			lastErr = err
+		} else {
+			return nil
+		}
+		attempt++
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting to retry: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	return lastErr
 }
 
 func (r *ObjectStoreResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -556,6 +787,13 @@ type ObjectStoreAccessLoggingConfig struct {
 	Cloudwatch *ObjectStoreCloudwatchAccessLoggingConfig `json:"cloudwatch,omitempty"`
 }
 
+type ObjectStoreThrottlingLimits struct {
+	ReadOperationsPerSecond  *int64 `json:"read_operations_per_second,omitempty"`
+	WriteOperationsPerSecond *int64 `json:"write_operations_per_second,omitempty"`
+	ReadBytesPerSecond       *int64 `json:"read_bytes_per_second,omitempty"`
+	WriteBytesPerSecond      *int64 `json:"write_bytes_per_second,omitempty"`
+}
+
 type ObjectStoreData struct {
 	Name          string `json:"name"`
 	StorageConfig struct {
@@ -572,6 +810,40 @@ type ObjectStoreData struct {
 	} `json:"cache_config"`
 	AccessLoggingConfig *ObjectStoreAccessLoggingConfig `json:"access_logging_config,omitempty"`
 	MetricsConfig       *ObjectStoreMetricsConfig       `json:"metrics_config,omitempty"`
+	ThrottlingLimits    *ObjectStoreThrottlingLimits    `json:"object_store_limits,omitempty"`
+}
+
+func fetchRouterCount(client http.Client, httpEndpoint string, httpAuthToken string) (int64, error) {
+	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/endpoints", httpEndpoint), nil)
+	if err != nil {
+		return 0, err
+	}
+	getRequest.Header.Set("Authorization", httpAuthToken)
+	getResp, err := client.Do(getRequest)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = getResp.Body.Close() }()
+	if getResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(getResp.Body)
+		return 0, fmt.Errorf("unable to fetch endpoints, got non-2xx response: %s %s", getResp.Status, string(body))
+	}
+	bodyBytes, err := io.ReadAll(getResp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("error reading endpoints response body: %v", err)
+	}
+	// Response is a map of AZ name -> list of socket addresses
+	var endpoints map[string][]struct {
+		SocketAddress string `json:"socket_address"`
+	}
+	if err = json.Unmarshal(bodyBytes, &endpoints); err != nil {
+		return 0, fmt.Errorf("error unmarshalling endpoints response: %v", err)
+	}
+	var count int64
+	for _, nodes := range endpoints {
+		count += int64(len(nodes))
+	}
+	return count, nil
 }
 
 func describeObjectStore(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ObjectStoreData, error) {

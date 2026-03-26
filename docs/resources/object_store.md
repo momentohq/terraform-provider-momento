@@ -28,7 +28,8 @@ resource "momento_valkey_cluster" "example" {
   }
 }
 
-# Creates a Momento object store in us-west-2 region with all optional configs (s3_prefix, access_logging_config, and metrics_config) specified.
+# Creates a Momento object store in us-west-2 region with all optional configs
+# (s3_prefix, access_logging_config, metrics_config, and throttling_limits) specified.
 # Waits for the valkey cluster to be created first if creating both for the first time.
 resource "momento_object_store" "example" {
   name                = "object-store-name"
@@ -44,6 +45,12 @@ resource "momento_object_store" "example" {
   metrics_config = {
     iam_role_arn = "metrics-iam-role-arn"
     region       = "us-west-2"
+  }
+  throttling_limits = {
+    read_operations_per_second  = 1000
+    write_operations_per_second = 500
+    read_bytes_per_second       = 10485760 # 10 MB/s
+    write_bytes_per_second      = 5242880  # 5 MB/s
   }
   # Explicit dependency: Forces object store creation to wait for cluster creation
   depends_on = [
@@ -67,10 +74,13 @@ resource "momento_object_store" "example" {
 - `access_logging_config` (Attributes) Optional configuration for access logging through CloudWatch. (see [below for nested schema](#nestedatt--access_logging_config))
 - `metrics_config` (Attributes) Optional configuration for exporting CloudWatch metrics. (see [below for nested schema](#nestedatt--metrics_config))
 - `s3_prefix` (String) Optional prefix path within the S3 bucket.
+- `throttling_limits` (Attributes) Optional configuration for request throttling limits. (see [below for nested schema](#nestedatt--throttling_limits))
 
 ### Read-Only
 
 - `id` (String) The ID of the Object Store.
+- `per_router_throttling_limits` (Attributes) The per-router-node throttling limits (aggregate limits divided by router_count) sent to the Momento API. (see [below for nested schema](#nestedatt--per_router_throttling_limits))
+- `router_count` (Number) The number of Momento router nodes backing this object store, computed from the /endpoints API.
 
 <a id="nestedatt--access_logging_config"></a>
 ### Nested Schema for `access_logging_config`
@@ -89,3 +99,25 @@ Required:
 
 - `iam_role_arn` (String) The ARN of the IAM role that Momento will assume to export metrics.
 - `region` (String) The AWS region where the metrics will be exported to.
+
+
+<a id="nestedatt--throttling_limits"></a>
+### Nested Schema for `throttling_limits`
+
+Optional:
+
+- `read_bytes_per_second` (Number) The maximum read throughput (bytes per second) that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+- `read_operations_per_second` (Number) The maximum number of read requests per second that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+- `write_bytes_per_second` (Number) The maximum write throughput (bytes per second) that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+- `write_operations_per_second` (Number) The maximum number of write requests per second that Momento will accept for this object store across all routers. This is used to prevent overwhelming the Object Store with requests. If not set, Momento will use a default limit.
+
+
+<a id="nestedatt--per_router_throttling_limits"></a>
+### Nested Schema for `per_router_throttling_limits`
+
+Read-Only:
+
+- `read_bytes_per_second` (Number)
+- `read_operations_per_second` (Number)
+- `write_bytes_per_second` (Number)
+- `write_operations_per_second` (Number)
