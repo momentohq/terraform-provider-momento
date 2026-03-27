@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.3...v0.6.0) (2026-03-26)
+
+
+### Features
+
+* support object store throttling limits ([#74](https://github.com/momentohq/terraform-provider-momento/issues/74)) ([00931c2](https://github.com/momentohq/terraform-provider-momento/commit/00931c2d4059addbe4f51941a8e50bf1eb13a07c))
+
 ## [0.5.3](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.2...v0.5.3) (2026-03-11)
 
 
