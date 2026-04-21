@@ -482,10 +482,12 @@ func sendObjectStoreRequest(plan *ObjectStoreResourceModel, r *ObjectStoreResour
 	putRequest.Header.Set("Content-Type", "application/json")
 	putRequest.Header.Set("Authorization", r.httpAuthToken)
 	httpResp, err := client.Do(putRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to create or update object store, got non-2xx response: %s %s", httpResp.Status, string(body))
@@ -616,12 +618,12 @@ func (r *ObjectStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
 
 	httpResp, err := client.Do(deleteRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got error: %s", err))
 		return
-	}
-	if httpResp != nil && httpResp.Body != nil {
-		_ = httpResp.Body.Close()
 	}
 	if httpResp.StatusCode >= 300 {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete object store, got non-200 response: %d", httpResp.StatusCode))
@@ -820,10 +822,12 @@ func fetchRouterCount(client http.Client, httpEndpoint string, httpAuthToken str
 	}
 	getRequest.Header.Set("Authorization", httpAuthToken)
 	getResp, err := client.Do(getRequest)
+	if getResp != nil {
+		defer func() { _ = getResp.Body.Close() }()
+	}
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = getResp.Body.Close() }()
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
 		return 0, fmt.Errorf("unable to fetch endpoints, got non-2xx response: %s %s", getResp.Status, string(body))
@@ -853,10 +857,12 @@ func describeObjectStore(client http.Client, name string, httpEndpoint string, h
 	}
 	getRequest.Header.Set("Authorization", httpAuthToken)
 	getResp, err := client.Do(getRequest)
+	if getResp != nil {
+		defer func() { _ = getResp.Body.Close() }()
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = getResp.Body.Close() }()
 	if getResp.StatusCode == 404 {
 		return nil, nil
 	}

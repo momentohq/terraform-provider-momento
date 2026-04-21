@@ -302,11 +302,13 @@ func (r *ValkeyClusterResource) Create(ctx context.Context, req resource.CreateR
 	postRequest.Header.Set("Content-Type", "application/json")
 	postRequest.Header.Set("Authorization", r.httpAuthToken)
 	httpResp, err := client.Do(postRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got error: %s", err))
 		return
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create valkey cluster, got non-200 response: %s %s", httpResp.Status, string(body)))
@@ -744,10 +746,12 @@ func (r *ValkeyClusterResource) updateReplicationGroup(clusterName string, nodeI
 	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to update replication group, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -780,10 +784,12 @@ func (r *ValkeyClusterResource) decreaseShardCount(clusterName string, shardCoun
 	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to decrease shard count, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -816,10 +822,12 @@ func (r *ValkeyClusterResource) increaseShardCount(clusterName string, shardCoun
 	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to increase shard count, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -855,10 +863,12 @@ func (r *ValkeyClusterResource) increaseReplicaCount(clusterName string, replica
 	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to increase replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -894,10 +904,12 @@ func (r *ValkeyClusterResource) decreaseReplicaCount(clusterName string, replica
 	updateRequest.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := client.Do(updateRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != 202 {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		return fmt.Errorf("unable to decrease replication factor, got non-202 response: %s %s", httpResp.Status, string(respBody))
@@ -913,11 +925,13 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 	}
 	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
 	httpResp, err := client.Do(deleteRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
 	if err != nil {
 		return err
 	}
 	body, _ := io.ReadAll(httpResp.Body)
-	_ = httpResp.Body.Close()
 	if httpResp.StatusCode == 404 {
 		return nil
 	}
@@ -1027,10 +1041,12 @@ func describeValkeyCluster(client http.Client, name string, httpEndpoint string,
 	}
 	getRequest.Header.Set("Authorization", httpAuthToken)
 	getResp, err := client.Do(getRequest)
+	if getResp != nil {
+		defer func() { _ = getResp.Body.Close() }()
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = getResp.Body.Close() }()
 	// Do not error if 404 not found
 	if getResp.StatusCode == 404 {
 		return nil, nil
