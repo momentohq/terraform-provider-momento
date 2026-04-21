@@ -913,12 +913,16 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 	}
 	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
 	httpResp, err := client.Do(deleteRequest)
-	if httpResp != nil && httpResp.Body != nil {
-		_ = httpResp.Body.Close()
+	if err != nil {
+		return err
 	}
-	if err == nil && httpResp != nil && httpResp.StatusCode == 404 {
-		// If the cluster is already gone, no need to poll
+	body, _ := io.ReadAll(httpResp.Body)
+	_ = httpResp.Body.Close()
+	if httpResp.StatusCode == 404 {
 		return nil
+	}
+	if httpResp.StatusCode >= 400 {
+		return fmt.Errorf("delete request failed (%s): %s", httpResp.Status, strings.TrimSpace(string(body)))
 	}
 
 	// Poll until the cluster is confirmed deleted (404)
