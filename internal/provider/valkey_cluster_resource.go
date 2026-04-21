@@ -935,7 +935,7 @@ func (r *ValkeyClusterResource) deleteClusterAndPollUntilGone(ctx context.Contex
 	if httpResp.StatusCode == 404 {
 		return nil
 	}
-	if httpResp.StatusCode >= 400 {
+	if httpResp.StatusCode == 409 {
 		return fmt.Errorf("delete request failed (%s): %s", httpResp.Status, strings.TrimSpace(string(body)))
 	}
 
