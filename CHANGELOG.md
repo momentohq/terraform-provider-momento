@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.0...v0.6.1) (2026-04-22)
+
+
+### Bug Fixes
+
+* return err when trying to delete cluster in use ([#76](https://github.com/momentohq/terraform-provider-momento/issues/76)) ([ba75bc0](https://github.com/momentohq/terraform-provider-momento/commit/ba75bc08f4ee3f4de02f6745f66a26e8183ab8a2))
+
 ## [0.6.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.5.3...v0.6.0) (2026-03-26)
 
 
