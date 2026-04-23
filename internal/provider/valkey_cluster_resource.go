@@ -471,7 +471,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 				)
 				return
 			}
-			r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
+			r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 		}
 	}
 
@@ -541,7 +541,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			}
 		}
 
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
 	if diff["shard_count"] {
@@ -592,7 +592,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			}
 		}
 
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
 	// Regardless of shard_placements, updateReplicationGroup if node_instance_type and/or enforce_shard_multi_az are updated
@@ -615,7 +615,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			)
 			return
 		}
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
 	// Describe the cluster after all updates have been requested and asynchronously applied.
@@ -1008,8 +1008,8 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 	}
 }
 
-func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string) {
-	// Poll until cluster status is "Active"
+func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string, resp *resource.UpdateResponse) {
+	// Poll until cluster status is "Active", log any other errors but do not stop polling
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -1019,7 +1019,11 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 			return
 		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
-			if err != nil || foundCluster == nil {
+			if err != nil {
+				resp.Diagnostics.AddWarning("Valkey Cluster Update Error", fmt.Sprintf("Cluster \"%s\" became active with errors: %v", clusterName, err))
+				continue
+			}
+			if foundCluster == nil {
 				continue
 			}
 			if foundCluster.Status == "Active" {
