@@ -639,6 +639,9 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
 	}
 
+	// Describe the cluster after all updates have been requested and asynchronously applied.
+	// Some updates may not have been possible, so save the state of the cluster returned from the service
+	// instead of always saving the planned terraform state.
 	foundCluster, err := describeValkeyCluster(*r.httpClient, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster after update, got error: %s", err))
@@ -1023,11 +1026,13 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 }
 
 func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string) {
+	// Poll until cluster status is "Active"
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			// Context has been cancelled, stop polling
 			return
 		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
