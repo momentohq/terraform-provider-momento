@@ -380,28 +380,7 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 		resp.Diagnostics.AddWarning("Valkey Cluster Error", fmt.Sprintf("Found valkey cluster \"%s\" with errors: %v", foundCluster.Name, foundCluster.Errors))
 	}
 
-	state.Id = types.StringValue(foundCluster.Name)
-	state.ClusterName = types.StringValue(foundCluster.Name)
-	state.NodeInstanceType = types.StringValue(foundCluster.NodeInstanceType)
-	state.ShardCount = types.Int64Value(foundCluster.ShardCount)
-	state.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
-	state.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
-
-	// reset the list of shard placements before repopulating from the response
-	state.ShardPlacements = nil
-	for _, sp := range foundCluster.ShardPlacements {
-		state.ShardPlacements = append(state.ShardPlacements, ShardPlacementModel{
-			Index:            types.Int64Value(sp.ShardIndex),
-			AvailabilityZone: types.StringValue(sp.AvailabilityZone),
-			ReplicaAvailabilityZones: func() []types.String {
-				replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
-				for j, az := range sp.ReplicaAvailabilityZones {
-					replicaAZs[j] = types.StringValue(az)
-				}
-				return replicaAZs
-			}(),
-		})
-	}
+	populateModelFromCluster(&state, foundCluster)
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -652,26 +631,30 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	plan.Id = types.StringValue(foundCluster.Name)
-	plan.ClusterName = types.StringValue(foundCluster.Name)
-	plan.NodeInstanceType = types.StringValue(foundCluster.NodeInstanceType)
-	plan.ShardCount = types.Int64Value(foundCluster.ShardCount)
-	plan.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
-	plan.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
-	plan.ShardPlacements = nil
-	for _, sp := range foundCluster.ShardPlacements {
+	populateModelFromCluster(&plan, foundCluster)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func populateModelFromCluster(model *ValkeyClusterResourceModel, cluster *DescribeValkeyClustersResponseData) {
+	model.Id = types.StringValue(cluster.Name)
+	model.ClusterName = types.StringValue(cluster.Name)
+	model.NodeInstanceType = types.StringValue(cluster.NodeInstanceType)
+	model.ShardCount = types.Int64Value(cluster.ShardCount)
+	model.ReplicationFactor = types.Int64Value(cluster.ReplicationFactor)
+	model.EnforceShardMultiAz = types.BoolValue(cluster.EnforceShardMultiAz)
+	model.ShardPlacements = nil
+	for _, sp := range cluster.ShardPlacements {
 		replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
 		for j, az := range sp.ReplicaAvailabilityZones {
 			replicaAZs[j] = types.StringValue(az)
 		}
-		plan.ShardPlacements = append(plan.ShardPlacements, ShardPlacementModel{
+		model.ShardPlacements = append(model.ShardPlacements, ShardPlacementModel{
 			Index:                    types.Int64Value(sp.ShardIndex),
 			AvailabilityZone:         types.StringValue(sp.AvailabilityZone),
 			ReplicaAvailabilityZones: replicaAZs,
 		})
 	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func shardPlacementsToAPIFormat(shardPlacements []ShardPlacementModel) []map[string]interface{} {
