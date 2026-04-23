@@ -492,7 +492,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 				)
 				return
 			}
-			r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+			r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
 		}
 	}
 
@@ -562,7 +562,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			}
 		}
 
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
 	}
 
 	if diff["shard_count"] {
@@ -613,7 +613,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			}
 		}
 
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
 	}
 
 	// Regardless of shard_placements, updateReplicationGroup if node_instance_type and/or enforce_shard_multi_az are updated
@@ -636,10 +636,38 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			)
 			return
 		}
-		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
+		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString())
 	}
 
-	// Save data into Terraform state
+	foundCluster, err := describeValkeyCluster(*r.httpClient, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster after update, got error: %s", err))
+		return
+	}
+	if foundCluster == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Valkey cluster %q not found after update", plan.ClusterName.ValueString()))
+		return
+	}
+
+	plan.Id = types.StringValue(foundCluster.Name)
+	plan.ClusterName = types.StringValue(foundCluster.Name)
+	plan.NodeInstanceType = types.StringValue(foundCluster.NodeInstanceType)
+	plan.ShardCount = types.Int64Value(foundCluster.ShardCount)
+	plan.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
+	plan.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
+	plan.ShardPlacements = nil
+	for _, sp := range foundCluster.ShardPlacements {
+		replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
+		for j, az := range sp.ReplicaAvailabilityZones {
+			replicaAZs[j] = types.StringValue(az)
+		}
+		plan.ShardPlacements = append(plan.ShardPlacements, ShardPlacementModel{
+			Index:                    types.Int64Value(sp.ShardIndex),
+			AvailabilityZone:         types.StringValue(sp.AvailabilityZone),
+			ReplicaAvailabilityZones: replicaAZs,
+		})
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -994,24 +1022,22 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 	}
 }
 
-func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string, resp *resource.UpdateResponse) {
-	// Poll until cluster status is "Active", log any other errors but do not stop polling
+func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clusterName string) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			// Context has been cancelled, stop polling
 			return
 		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
-			if foundCluster != nil && foundCluster.Status == "Active" {
+			if err != nil || foundCluster == nil {
+				continue
+			}
+			if foundCluster.Status == "Active" {
 				return
-			} else if err != nil || foundCluster == nil {
-				resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
 			}
 		}
-
 	}
 }
 
