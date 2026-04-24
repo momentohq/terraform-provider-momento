@@ -450,6 +450,20 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	// If the cluster is still updating from a previous timed-out apply, wait for it to become Active
+	// before issuing new update requests, which would otherwise get a 409 Conflict.
+	existingCluster, err := describeValkeyCluster(*r.httpClient, currentState.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster before update, got error: %s", err))
+		return
+	}
+	if existingCluster != nil && existingCluster.Status != "Active" {
+		r.pollUntilClusterUpdated(ctx, currentState.ClusterName.ValueString(), resp)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	// If replication_factor is changing from nonzero to 0, enforce_shard_multi_az must be set to false first.
 	// Else it'll fail with "Invalid Argument: Must have at least 1 replica for Multi-AZ enabled Replication Group"
 	if plan.ReplicationFactor.ValueInt64() == 0 && currentState.ReplicationFactor.ValueInt64() > 0 {
@@ -618,6 +632,11 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
+	// Check for timeouts/errors here so inconsistent state isn't saved
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Describe the cluster after all updates have been requested and asynchronously applied.
 	// Some updates may not have been possible, so save the state of the cluster returned from the service
 	// instead of always saving the planned terraform state.
@@ -637,10 +656,6 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 	populateModelFromCluster(&plan, foundCluster)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
 }
 
 func populateModelFromCluster(model *ValkeyClusterResourceModel, cluster *DescribeValkeyClustersResponseData) {
@@ -1022,7 +1037,10 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 	for {
 		select {
 		case <-ctx.Done():
-			// Context has been cancelled, stop polling
+			resp.Diagnostics.AddError(
+				"Update Timeout",
+				fmt.Sprintf("Timed out waiting for cluster %s to become Active. The cluster may still be updating. Run terraform apply again to reconcile the current state.", clusterName),
+			)
 			return
 		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
