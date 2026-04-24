@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.1...v0.6.2) (2026-04-24)
+
+
+### Bug Fixes
+
+* describe cluster state after update ([#78](https://github.com/momentohq/terraform-provider-momento/issues/78)) ([e60cf5d](https://github.com/momentohq/terraform-provider-momento/commit/e60cf5df7f0d76afc8f2c9ae6ea3839e1168047b))
+
 ## [0.6.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.0...v0.6.1) (2026-04-22)
 
 
