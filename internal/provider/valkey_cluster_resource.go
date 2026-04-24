@@ -361,7 +361,7 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 
 	// Find valkey cluster
 	client := *r.httpClient
-	foundCluster, err := describeValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	foundCluster, err := describeValkeyCluster(ctx, client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if err == nil && foundCluster == nil {
 		resp.Diagnostics.AddWarning("Cluster Not Found", fmt.Sprintf("Cluster with name \"%s\" not found, removing from state", state.ClusterName.ValueString()))
 		resp.State.RemoveResource(ctx)
@@ -452,7 +452,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 
 	// If the cluster is still updating from a previous timed-out apply, wait for it to become Active
 	// before issuing new update requests, which would otherwise get a 409 Conflict.
-	existingCluster, err := describeValkeyCluster(*r.httpClient, currentState.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	existingCluster, err := describeValkeyCluster(ctx, *r.httpClient, currentState.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster before update, got error: %s", err))
 		return
@@ -640,7 +640,7 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 	// Describe the cluster after all updates have been requested and asynchronously applied.
 	// Some updates may not have been possible, so save the state of the cluster returned from the service
 	// instead of always saving the planned terraform state.
-	foundCluster, err := describeValkeyCluster(*r.httpClient, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster after update, got error: %s", err))
 		return
@@ -1010,7 +1010,7 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 			// Context has been cancelled, stop polling
 			return
 		case <-ticker.C:
-			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+			foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if foundCluster != nil && foundCluster.Status == "Active" {
 				return
 			} else if foundCluster != nil && foundCluster.Status == "CreationFailed" {
@@ -1043,7 +1043,7 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 			)
 			return
 		case <-ticker.C:
-			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+			foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if err != nil {
 				resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster %s status is Active", err, clusterName))
 				continue
@@ -1077,8 +1077,8 @@ type DescribeValkeyClustersResponseData struct {
 	Errors []string `json:"errors"`
 }
 
-func describeValkeyCluster(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeValkeyClustersResponseData, error) {
-	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", httpEndpoint, name), nil)
+func describeValkeyCluster(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeValkeyClustersResponseData, error) {
+	getRequest, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/ec-cluster/%s", httpEndpoint, name), nil)
 	if err != nil {
 		return nil, err
 	}
