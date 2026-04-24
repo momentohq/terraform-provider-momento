@@ -457,7 +457,11 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster before update, got error: %s", err))
 		return
 	}
-	if existingCluster != nil && existingCluster.Status != "Active" {
+	if existingCluster == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Valkey cluster %q not found, unable to update", currentState.ClusterName.ValueString()))
+		return
+	}
+	if existingCluster.Status != "Active" {
 		r.pollUntilClusterUpdated(ctx, currentState.ClusterName.ValueString(), resp)
 		if resp.Diagnostics.HasError() {
 			return
@@ -1037,10 +1041,17 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 	for {
 		select {
 		case <-ctx.Done():
-			resp.Diagnostics.AddError(
-				"Update Timeout",
-				fmt.Sprintf("Timed out waiting for cluster %s to become Active. The cluster may still be updating. Run terraform apply again to reconcile the current state.", clusterName),
-			)
+			if ctx.Err() == context.Canceled {
+				resp.Diagnostics.AddError(
+					"Update Cancelled",
+					fmt.Sprintf("Waiting for cluster %s to become Active was cancelled: %v. The cluster may still be updating. Run terraform apply again to reconcile the current state.", clusterName, ctx.Err()),
+				)
+			} else {
+				resp.Diagnostics.AddError(
+					"Update Timeout",
+					fmt.Sprintf("Timed out waiting for cluster %s to become Active: %v. The cluster may still be updating. Run terraform apply again to reconcile the current state.", clusterName, ctx.Err()),
+				)
+			}
 			return
 		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
@@ -1049,7 +1060,8 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 				continue
 			}
 			if foundCluster == nil {
-				continue
+				resp.Diagnostics.AddError("Cluster not found", fmt.Sprintf("Error: %s. The cluster %s was not found while waiting for it to become Active.", err, clusterName))
+				return
 			}
 			if foundCluster.Status == "Active" {
 				return
