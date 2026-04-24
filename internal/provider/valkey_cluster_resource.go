@@ -630,10 +630,17 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Valkey cluster %q not found after update", plan.ClusterName.ValueString()))
 		return
 	}
+	if len(foundCluster.Errors) > 0 {
+		resp.Diagnostics.AddWarning("Valkey Cluster Error", fmt.Sprintf("Found valkey cluster \"%s\" with errors: %v", foundCluster.Name, foundCluster.Errors))
+	}
 
 	populateModelFromCluster(&plan, foundCluster)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
 }
 
 func populateModelFromCluster(model *ValkeyClusterResourceModel, cluster *DescribeValkeyClustersResponseData) {
@@ -1020,7 +1027,7 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 		case <-ticker.C:
 			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if err != nil {
-				resp.Diagnostics.AddWarning("Valkey Cluster Update Error", fmt.Sprintf("Cluster \"%s\" became active with errors: %v", clusterName, err))
+				resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster %s status is Active", err, clusterName))
 				continue
 			}
 			if foundCluster == nil {
