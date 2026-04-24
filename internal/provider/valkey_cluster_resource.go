@@ -361,7 +361,7 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 
 	// Find valkey cluster
 	client := *r.httpClient
-	foundCluster, err := describeValkeyCluster(client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	foundCluster, err := describeValkeyCluster(ctx, client, state.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
 	if err == nil && foundCluster == nil {
 		resp.Diagnostics.AddWarning("Cluster Not Found", fmt.Sprintf("Cluster with name \"%s\" not found, removing from state", state.ClusterName.ValueString()))
 		resp.State.RemoveResource(ctx)
@@ -380,28 +380,7 @@ func (r *ValkeyClusterResource) Read(ctx context.Context, req resource.ReadReque
 		resp.Diagnostics.AddWarning("Valkey Cluster Error", fmt.Sprintf("Found valkey cluster \"%s\" with errors: %v", foundCluster.Name, foundCluster.Errors))
 	}
 
-	state.Id = types.StringValue(foundCluster.Name)
-	state.ClusterName = types.StringValue(foundCluster.Name)
-	state.NodeInstanceType = types.StringValue(foundCluster.NodeInstanceType)
-	state.ShardCount = types.Int64Value(foundCluster.ShardCount)
-	state.ReplicationFactor = types.Int64Value(foundCluster.ReplicationFactor)
-	state.EnforceShardMultiAz = types.BoolValue(foundCluster.EnforceShardMultiAz)
-
-	// reset the list of shard placements before repopulating from the response
-	state.ShardPlacements = nil
-	for _, sp := range foundCluster.ShardPlacements {
-		state.ShardPlacements = append(state.ShardPlacements, ShardPlacementModel{
-			Index:            types.Int64Value(sp.ShardIndex),
-			AvailabilityZone: types.StringValue(sp.AvailabilityZone),
-			ReplicaAvailabilityZones: func() []types.String {
-				replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
-				for j, az := range sp.ReplicaAvailabilityZones {
-					replicaAZs[j] = types.StringValue(az)
-				}
-				return replicaAZs
-			}(),
-		})
-	}
+	populateModelFromCluster(&state, foundCluster)
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -469,6 +448,24 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 			"Updates to shard_placements that change the primary AZ for a shard are not allowed. Please manually delete and recreate the resource.",
 		)
 		return
+	}
+
+	// If the cluster is still updating from a previous timed-out apply, wait for it to become Active
+	// before issuing new update requests, which would otherwise get a 409 Conflict.
+	existingCluster, err := describeValkeyCluster(ctx, *r.httpClient, currentState.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster before update, got error: %s", err))
+		return
+	}
+	if existingCluster == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Valkey cluster %q not found, unable to update", currentState.ClusterName.ValueString()))
+		return
+	}
+	if existingCluster.Status != "Active" {
+		r.pollUntilClusterUpdated(ctx, currentState.ClusterName.ValueString(), resp)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// If replication_factor is changing from nonzero to 0, enforce_shard_multi_az must be set to false first.
@@ -639,8 +636,51 @@ func (r *ValkeyClusterResource) Update(ctx context.Context, req resource.UpdateR
 		r.pollUntilClusterUpdated(ctx, plan.ClusterName.ValueString(), resp)
 	}
 
-	// Save data into Terraform state
+	// Check for timeouts/errors here so inconsistent state isn't saved
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Describe the cluster after all updates have been requested and asynchronously applied.
+	// Some updates may not have been possible, so save the state of the cluster returned from the service
+	// instead of always saving the planned terraform state.
+	foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, plan.ClusterName.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to describe valkey cluster after update, got error: %s", err))
+		return
+	}
+	if foundCluster == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Valkey cluster %q not found after update", plan.ClusterName.ValueString()))
+		return
+	}
+	if len(foundCluster.Errors) > 0 {
+		resp.Diagnostics.AddWarning("Valkey Cluster Error", fmt.Sprintf("Found valkey cluster \"%s\" with errors: %v", foundCluster.Name, foundCluster.Errors))
+	}
+
+	populateModelFromCluster(&plan, foundCluster)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func populateModelFromCluster(model *ValkeyClusterResourceModel, cluster *DescribeValkeyClustersResponseData) {
+	model.Id = types.StringValue(cluster.Name)
+	model.ClusterName = types.StringValue(cluster.Name)
+	model.NodeInstanceType = types.StringValue(cluster.NodeInstanceType)
+	model.ShardCount = types.Int64Value(cluster.ShardCount)
+	model.ReplicationFactor = types.Int64Value(cluster.ReplicationFactor)
+	model.EnforceShardMultiAz = types.BoolValue(cluster.EnforceShardMultiAz)
+	model.ShardPlacements = nil
+	for _, sp := range cluster.ShardPlacements {
+		replicaAZs := make([]types.String, len(sp.ReplicaAvailabilityZones))
+		for j, az := range sp.ReplicaAvailabilityZones {
+			replicaAZs[j] = types.StringValue(az)
+		}
+		model.ShardPlacements = append(model.ShardPlacements, ShardPlacementModel{
+			Index:                    types.Int64Value(sp.ShardIndex),
+			AvailabilityZone:         types.StringValue(sp.AvailabilityZone),
+			ReplicaAvailabilityZones: replicaAZs,
+		})
+	}
 }
 
 func shardPlacementsToAPIFormat(shardPlacements []ShardPlacementModel) []map[string]interface{} {
@@ -974,7 +1014,7 @@ func (r *ValkeyClusterResource) pollUntilClusterReady(ctx context.Context, clust
 			// Context has been cancelled, stop polling
 			return
 		case <-ticker.C:
-			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+			foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
 			if foundCluster != nil && foundCluster.Status == "Active" {
 				return
 			} else if foundCluster != nil && foundCluster.Status == "CreationFailed" {
@@ -1001,17 +1041,32 @@ func (r *ValkeyClusterResource) pollUntilClusterUpdated(ctx context.Context, clu
 	for {
 		select {
 		case <-ctx.Done():
-			// Context has been cancelled, stop polling
+			if ctx.Err() == context.Canceled {
+				resp.Diagnostics.AddError(
+					"Update Cancelled",
+					fmt.Sprintf("Waiting for cluster %s to become Active was cancelled: %v. The cluster may still be updating. Run terraform apply again to reconcile the current state.", clusterName, ctx.Err()),
+				)
+			} else {
+				resp.Diagnostics.AddError(
+					"Update Timeout",
+					fmt.Sprintf("Timed out waiting for cluster %s to become Active: %v. The cluster may still be updating. Run terraform apply again to reconcile the current state.", clusterName, ctx.Err()),
+				)
+			}
 			return
 		case <-ticker.C:
-			foundCluster, err := describeValkeyCluster(*r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
-			if foundCluster != nil && foundCluster.Status == "Active" {
+			foundCluster, err := describeValkeyCluster(ctx, *r.httpClient, clusterName, r.httpEndpoint, r.httpAuthToken)
+			if err != nil {
+				resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster %s status is Active", err, clusterName))
+				continue
+			}
+			if foundCluster == nil {
+				resp.Diagnostics.AddError("Cluster not found", fmt.Sprintf("Error: %s. The cluster %s was not found while waiting for it to become Active.", err, clusterName))
 				return
-			} else if err != nil || foundCluster == nil {
-				resp.Diagnostics.AddWarning("Describe after update error", fmt.Sprintf("Error: %s. Continuing to poll until cluster status is Active", err))
+			}
+			if foundCluster.Status == "Active" {
+				return
 			}
 		}
-
 	}
 }
 
@@ -1034,8 +1089,8 @@ type DescribeValkeyClustersResponseData struct {
 	Errors []string `json:"errors"`
 }
 
-func describeValkeyCluster(client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeValkeyClustersResponseData, error) {
-	getRequest, err := http.NewRequest("GET", fmt.Sprintf("%s/ec-cluster/%s", httpEndpoint, name), nil)
+func describeValkeyCluster(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*DescribeValkeyClustersResponseData, error) {
+	getRequest, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/ec-cluster/%s", httpEndpoint, name), nil)
 	if err != nil {
 		return nil, err
 	}
