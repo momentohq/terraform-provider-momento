@@ -526,14 +526,20 @@ func (r *ObjectStoreResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	routerCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
-	if err != nil {
-		// Don't fail the plan on a transient error fetching router count, but surface a warning.
-		resp.Diagnostics.AddWarning(
-			"Unable to fetch router count",
-			fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err),
-		)
-		return
+	var routerCount int64
+	if !state.RouterCount.IsNull() && !state.RouterCount.IsUnknown() {
+		routerCount = state.RouterCount.ValueInt64()
+	} else {
+		fetchedCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
+		if err != nil {
+			// Don't fail the plan on a transient error fetching router count, but surface a warning.
+			resp.Diagnostics.AddWarning(
+				"Unable to fetch router count",
+				fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err),
+			)
+			return
+		}
+		routerCount = fetchedCount
 	}
 
 	// Always compute and set per_router_throttling_limits so that the plan accurately reflects
@@ -687,6 +693,7 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 		routerCount, err := fetchRouterCount(client, r.httpEndpoint, r.httpAuthToken)
 		if err != nil {
 			resp.Diagnostics.AddWarning("Unable to fetch router count during read", fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err))
+			state.RouterCount = types.Int64Null()
 		} else {
 			state.RouterCount = types.Int64Value(routerCount)
 		}
