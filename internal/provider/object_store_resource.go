@@ -526,20 +526,14 @@ func (r *ObjectStoreResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	var routerCount int64
-	if !state.RouterCount.IsNull() && !state.RouterCount.IsUnknown() {
-		routerCount = state.RouterCount.ValueInt64()
-	} else {
-		fetchedCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
-		if err != nil {
-			// Don't fail the plan on a transient error fetching router count, but surface a warning.
-			resp.Diagnostics.AddWarning(
-				"Unable to fetch router count",
-				fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err),
-			)
-			return
-		}
-		routerCount = fetchedCount
+	routerCount, err := fetchRouterCount(*r.httpClient, r.httpEndpoint, r.httpAuthToken)
+	if err != nil {
+		// Don't fail the plan on a transient error fetching router count, but surface a warning.
+		resp.Diagnostics.AddWarning(
+			"Unable to fetch router count",
+			fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err),
+		)
+		return
 	}
 
 	// Always compute and set per_router_throttling_limits so that the plan accurately reflects
@@ -687,13 +681,12 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	// be recovered from the API. The last-applied Terraform config is authoritative; drift
 	// detection for throttling_limits is not supported via refresh.
 
-	// Update router count and per_router_throttling_limits from the live API state
-	// so that ModifyPlan accurately computes the diff from the actual API values.
+	// When throttling limits are configured, update router count and per_router_throttling_limits
+	// from the live API state so that ModifyPlan accurately computes the diff from the actual API values.
 	if state.ThrottlingLimits != nil {
 		routerCount, err := fetchRouterCount(client, r.httpEndpoint, r.httpAuthToken)
 		if err != nil {
 			resp.Diagnostics.AddWarning("Unable to fetch router count during read", fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err))
-			state.RouterCount = types.Int64Null()
 		} else {
 			state.RouterCount = types.Int64Value(routerCount)
 		}
