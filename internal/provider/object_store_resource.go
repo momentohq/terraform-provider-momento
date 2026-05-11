@@ -680,10 +680,51 @@ func (r *ObjectStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	// Since the aggregate→per-router division uses ceiling arithmetic, the original values cannot
 	// be recovered from the API. The last-applied Terraform config is authoritative; drift
 	// detection for throttling_limits is not supported via refresh.
-	//
-	// router_count and per_router_throttling_limits are also intentionally not updated here.
-	// They reflect the last-applied values so that ModifyPlan can detect router count
-	// changes and trigger an Update to push corrected per-router limits to the API.
+
+	// When throttling limits are configured, update router count and per_router_throttling_limits
+	// from the live API state so that ModifyPlan accurately computes the diff from the actual API values.
+	if state.ThrottlingLimits != nil {
+		routerCount, err := fetchRouterCount(client, r.httpEndpoint, r.httpAuthToken)
+		if err != nil {
+			resp.Diagnostics.AddWarning("Unable to fetch router count during read", fmt.Sprintf("Failed to fetch router count from %q: %v.", r.httpEndpoint, err))
+		} else {
+			state.RouterCount = types.Int64Value(routerCount)
+		}
+
+		if foundObjectStore.ThrottlingLimits != nil {
+			perRouter := ThrottlingLimitsConfig{
+				ReadOperationsPerSecond:  types.Int64Null(),
+				WriteOperationsPerSecond: types.Int64Null(),
+				ReadBytesPerSecond:       types.Int64Null(),
+				WriteBytesPerSecond:      types.Int64Null(),
+			}
+			if foundObjectStore.ThrottlingLimits.ReadOperationsPerSecond != nil {
+				perRouter.ReadOperationsPerSecond = types.Int64Value(*foundObjectStore.ThrottlingLimits.ReadOperationsPerSecond)
+			}
+			if foundObjectStore.ThrottlingLimits.WriteOperationsPerSecond != nil {
+				perRouter.WriteOperationsPerSecond = types.Int64Value(*foundObjectStore.ThrottlingLimits.WriteOperationsPerSecond)
+			}
+			if foundObjectStore.ThrottlingLimits.ReadBytesPerSecond != nil {
+				perRouter.ReadBytesPerSecond = types.Int64Value(*foundObjectStore.ThrottlingLimits.ReadBytesPerSecond)
+			}
+			if foundObjectStore.ThrottlingLimits.WriteBytesPerSecond != nil {
+				perRouter.WriteBytesPerSecond = types.Int64Value(*foundObjectStore.ThrottlingLimits.WriteBytesPerSecond)
+			}
+
+			obj, diags := types.ObjectValueFrom(ctx, perRouterThrottlingLimitsAttrTypes, perRouter)
+			if diags.HasError() {
+				resp.Diagnostics.AddWarning("Error building per-router throttling limits object", fmt.Sprintf("%v", diags))
+				state.PerRouterThrottlingLimits = types.ObjectNull(perRouterThrottlingLimitsAttrTypes)
+			} else {
+				state.PerRouterThrottlingLimits = obj
+			}
+		} else {
+			state.PerRouterThrottlingLimits = types.ObjectNull(perRouterThrottlingLimitsAttrTypes)
+		}
+	} else {
+		state.RouterCount = types.Int64Null()
+		state.PerRouterThrottlingLimits = types.ObjectNull(perRouterThrottlingLimitsAttrTypes)
+	}
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
