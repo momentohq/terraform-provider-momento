@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.2...v0.6.3) (2026-05-11)
+
+
+### Bug Fixes
+
+* update terraform state by reading limits from momento first ([#80](https://github.com/momentohq/terraform-provider-momento/issues/80)) ([8e546d5](https://github.com/momentohq/terraform-provider-momento/commit/8e546d52d7722d0bea83dbc0da44548f9d15468f))
+
 ## [0.6.2](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.1...v0.6.2) (2026-04-24)
 
 
