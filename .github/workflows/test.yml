@@ -4,7 +4,9 @@ name: Tests
 # This GitHub action runs your tests for each pull request and push.
 # Optionally, you can turn it on using a schedule for regular testing.
 # No paths-ignore: every job here is a required status check on main, so the
-# workflow must report on every PR or doc-only PRs become unmergeable.
+# workflow must report on every PR or doc-only PRs become unmergeable. Instead,
+# the changes job below computes whether non-doc files changed and the other
+# jobs skip when they didn't — skipped runs still satisfy required checks.
 on:
   pull_request:
 
@@ -13,9 +15,30 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        with:
+          predicate-quantifier: 'every' # a file matches only if ALL patterns match
+          filters: |
+            code:
+              - '!README.md'
+              - '!README.template.md'
+              - '!CONTRIBUTING.md'
+              - '!CONTRIBUTING.template.md'
+
   # Ensure project builds before running testing matrix
   build:
     name: Build
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -32,6 +55,8 @@ jobs:
           version: latest
 
   generate:
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
