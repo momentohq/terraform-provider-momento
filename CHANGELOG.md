@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.4](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.3...v0.6.4) (2026-08-27)
+
+
+### Bug Fixes
+
+* gate test jobs on changed paths so required checks report on doc-only PRs ([#82](https://github.com/momentohq/terraform-provider-momento/issues/82)) ([a70e50b](https://github.com/momentohq/terraform-provider-momento/commit/a70e50b2a37adcef2428b88d49459116db0a4c80))
+
+
+### Miscellaneous
+
+* bump grpc, x/crypto and circl for security advisories ([#85](https://github.com/momentohq/terraform-provider-momento/issues/85)) ([7d845b6](https://github.com/momentohq/terraform-provider-momento/commit/7d845b6b26da2e18a16be92d7d4fa2c355c0dade))
+* retire the machine-user release token ([#84](https://github.com/momentohq/terraform-provider-momento/issues/84)) ([a845f06](https://github.com/momentohq/terraform-provider-momento/commit/a845f06da279aa9f6ebf450fb1ed585e7723dddb))
+
 ## [0.6.3](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.2...v0.6.3) (2026-05-11)
 
 
