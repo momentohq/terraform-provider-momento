@@ -803,9 +803,14 @@ func (r *CustomRoleResource) Read(ctx context.Context, req resource.ReadRequest,
 	foundCustomRole, err := describeCustomRole(client, state.Id.ValueStringPointer(), state.Name.ValueStringPointer(), r.httpMgaEndpoint, r.httpAuthToken)
 	if foundCustomRole == nil && err == nil {
 		// Custom role not found, remove from state
-		identifierString := fmt.Sprintf("ID \"%s\"", state.Id.ValueString())
-		if !state.Name.IsNull() {
+		var identifierString string
+		switch {
+		case !state.Id.IsNull() && !state.Name.IsNull():
+			identifierString = fmt.Sprintf("ID \"%s\" or name \"%s\"", state.Id.ValueString(), state.Name.ValueString())
+		case !state.Name.IsNull():
 			identifierString = fmt.Sprintf("name \"%s\"", state.Name.ValueString())
+		default:
+			identifierString = fmt.Sprintf("ID \"%s\"", state.Id.ValueString())
 		}
 		resp.Diagnostics.AddWarning("Custom Role Not Found", fmt.Sprintf("The custom role with %s was not found. It may have been deleted outside of Terraform. Removing from state.", identifierString))
 		resp.State.RemoveResource(ctx)
