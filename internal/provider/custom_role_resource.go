@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -24,8 +26,10 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource              = &CustomRoleResource{}
-	_ resource.ResourceWithConfigure = &CustomRoleResource{}
+	_ resource.Resource                = &CustomRoleResource{}
+	_ resource.ResourceWithConfigure   = &CustomRoleResource{}
+	_ resource.ResourceWithImportState = &CustomRoleResource{}
+	_ resource.ResourceWithIdentity    = &CustomRoleResource{}
 )
 
 func NewCustomRoleResource() resource.Resource {
@@ -107,14 +111,32 @@ type PermissionsModel struct {
 
 // CustomRoleResourceModel describes the resource data model.
 type CustomRoleResourceModel struct {
-	Id          types.String     `tfsdk:"id"`
-	Name        types.String     `tfsdk:"name"`
-	Description types.String     `tfsdk:"description"`
-	Permissions PermissionsModel `tfsdk:"permissions"`
+	Id          types.String      `tfsdk:"id"`
+	Name        types.String      `tfsdk:"name"`
+	Description types.String      `tfsdk:"description"`
+	Permissions *PermissionsModel `tfsdk:"permissions"`
+}
+
+// CustomRoleIdentityModel describes the resource identity data model.
+type CustomRoleIdentityModel struct {
+	Name types.String `tfsdk:"name"`
 }
 
 func (r *CustomRoleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_custom_role"
+	// The identity is the role name, which can be changed in place.
+	resp.ResourceBehavior.MutableIdentity = true
+}
+
+func (r *CustomRoleResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"name": identityschema.StringAttribute{
+				Description:       "The name of the Custom Role.",
+				RequiredForImport: true,
+			},
+		},
+	}
 }
 
 func nameSelectorAttribute(resources string) schema.SingleNestedAttribute {
@@ -552,6 +574,7 @@ func (r *CustomRoleResource) Create(ctx context.Context, req resource.CreateRequ
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, CustomRoleIdentityModel{Name: plan.Name})...)
 }
 
 type DeleteStatus string
@@ -666,6 +689,105 @@ func (r *CustomRoleResource) Delete(ctx context.Context, req resource.DeleteRequ
 	}
 }
 
+func allSelectorModel(v any) (*AllSelectorModel, error) {
+	switch v {
+	case nil:
+		return nil, nil
+	case "*":
+		return &AllSelectorModel{All: types.BoolValue(true)}, nil
+	}
+	return nil, fmt.Errorf("unexpected selector %v", v)
+}
+
+func selectorFields(v any, keys ...string) (isNull bool, all types.Bool, fields map[string]types.String, err error) {
+	fields = make(map[string]types.String, len(keys))
+	for _, key := range keys {
+		fields[key] = types.StringNull()
+	}
+	switch v := v.(type) {
+	case nil:
+		return true, types.BoolNull(), fields, nil
+	case string:
+		if v == "*" {
+			return false, types.BoolValue(true), fields, nil
+		}
+	case map[string]any:
+		for _, key := range keys {
+			if value, ok := v[key].(string); ok {
+				fields[key] = types.StringValue(value)
+				return false, types.BoolNull(), fields, nil
+			}
+		}
+	}
+	return false, types.BoolNull(), fields, fmt.Errorf("unexpected selector %v", v)
+}
+
+func nameSelectorModel(v any) (*NameSelectorModel, error) {
+	isNull, all, fields, err := selectorFields(v, "name")
+	if isNull || err != nil {
+		return nil, err
+	}
+	return &NameSelectorModel{All: all, Name: fields["name"]}, nil
+}
+
+func nameOrPrefixSelectorModel(v any) (*NameOrPrefixSelectorModel, error) {
+	isNull, all, fields, err := selectorFields(v, "name", "prefix")
+	if isNull || err != nil {
+		return nil, err
+	}
+	return &NameOrPrefixSelectorModel{All: all, Name: fields["name"], Prefix: fields["prefix"]}, nil
+}
+
+func itemSelectorModel(v any) (*ItemSelectorModel, error) {
+	isNull, all, fields, err := selectorFields(v, "key", "key_prefix")
+	if isNull || err != nil {
+		return nil, err
+	}
+	return &ItemSelectorModel{All: all, KeyName: fields["key"], KeyPrefix: fields["key_prefix"]}, nil
+}
+
+func ruleModel(rule RuleData) (RuleModel, error) {
+	var errs []error
+	collect := func(err error) { errs = append(errs, err) }
+	model := RuleModel{Type: rule.Type, Permissions: rule.Permissions}
+	var err error
+	model.Caches, err = nameSelectorModel(rule.Caches)
+	collect(err)
+	model.Items, err = itemSelectorModel(rule.Items)
+	collect(err)
+	model.Topics, err = nameOrPrefixSelectorModel(rule.Topics)
+	collect(err)
+	model.Stores, err = nameSelectorModel(rule.Stores)
+	collect(err)
+	model.Functions, err = nameOrPrefixSelectorModel(rule.Functions)
+	collect(err)
+	model.Databases, err = nameSelectorModel(rule.Databases)
+	collect(err)
+	model.Resources, err = allSelectorModel(rule.Resources)
+	collect(err)
+	return model, errors.Join(errs...)
+}
+
+func permissionsModel(permissions PermissionsData) (*PermissionsModel, error) {
+	model := &PermissionsModel{Rules: make([]RuleModel, 0, len(permissions.Rules))}
+	for i, rule := range permissions.Rules {
+		ruleModel, err := ruleModel(rule)
+		if err != nil {
+			return nil, fmt.Errorf("rule %d: %w", i, err)
+		}
+		model.Rules = append(model.Rules, ruleModel)
+	}
+	for _, condition := range permissions.Conditions {
+		var conditionModel ConditionModel
+		conditionModel.IpFilter.AllowedCidrRanges = make([]types.String, 0, len(condition.IpFilter.AllowedCidrRanges))
+		for _, cidr := range condition.IpFilter.AllowedCidrRanges {
+			conditionModel.IpFilter.AllowedCidrRanges = append(conditionModel.IpFilter.AllowedCidrRanges, types.StringValue(cidr))
+		}
+		model.Conditions = append(model.Conditions, conditionModel)
+	}
+	return model, nil
+}
+
 func (r *CustomRoleResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state CustomRoleResourceModel
 
@@ -678,10 +800,14 @@ func (r *CustomRoleResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	// Find custom role
 	client := *r.httpClient
-	foundCustomRole, err := describeCustomRole(client, state.Id.ValueString(), r.httpMgaEndpoint, r.httpAuthToken)
+	foundCustomRole, err := describeCustomRole(client, state.Id.ValueStringPointer(), state.Name.ValueStringPointer(), r.httpMgaEndpoint, r.httpAuthToken)
 	if foundCustomRole == nil && err == nil {
 		// Custom role not found, remove from state
-		resp.Diagnostics.AddWarning("Custom Role Not Found", fmt.Sprintf("The custom role with ID \"%s\" was not found. It may have been deleted outside of Terraform. Removing from state.", state.Id.ValueString()))
+		identifierString := fmt.Sprintf("ID \"%s\"", state.Id.ValueString())
+		if !state.Name.IsNull() {
+			identifierString = fmt.Sprintf("name \"%s\"", state.Name.ValueString())
+		}
+		resp.Diagnostics.AddWarning("Custom Role Not Found", fmt.Sprintf("The custom role with %s was not found. It may have been deleted outside of Terraform. Removing from state.", identifierString))
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -690,14 +816,19 @@ func (r *CustomRoleResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
+	permissions, err := permissionsModel(foundCustomRole.Permissions)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse custom role permissions, got error: %s", err))
+		return
+	}
 	state.Id = types.StringValue(foundCustomRole.Id)
+	state.Name = types.StringValue(foundCustomRole.Name)
+	state.Description = types.StringValue(foundCustomRole.Description)
+	state.Permissions = permissions
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, CustomRoleIdentityModel{Name: state.Name})...)
 }
 
 func (r *CustomRoleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -772,10 +903,23 @@ func (r *CustomRoleResource) Update(ctx context.Context, req resource.UpdateRequ
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, CustomRoleIdentityModel{Name: plan.Name})...)
 }
 
 func (r *CustomRoleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
+	// Imported by ID (`terraform import` or an import block with `id`): the role ID.
+	if req.ID != "" {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
+		return
+	}
+
+	// Imported by an import block with `identity`: the role name.
+	var identity CustomRoleIdentityModel
+	resp.Diagnostics.Append(req.Identity.Get(ctx, &identity)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), identity.Name)...)
 }
 
 type ListCustomRolesData struct {
@@ -817,7 +961,7 @@ func listCustomRoles(client http.Client, httpMgaEndpoint string, httpAuthToken s
 	return &customRolesList, nil
 }
 
-func describeCustomRole(client http.Client, id string, httpMgaEndpoint string, httpAuthToken string) (*CustomRoleData, error) {
+func describeCustomRole(client http.Client, id *string, name *string, httpMgaEndpoint string, httpAuthToken string) (*CustomRoleData, error) {
 	var nextToken *string
 	for {
 		customRolesList, err := listCustomRoles(client, httpMgaEndpoint, httpAuthToken, nextToken)
@@ -825,7 +969,10 @@ func describeCustomRole(client http.Client, id string, httpMgaEndpoint string, h
 			return nil, fmt.Errorf("error listing custom roles: %v", err)
 		}
 		for _, role := range customRolesList.Roles {
-			if role.Id == id {
+			if id != nil && role.Id == *id {
+				return &role, nil
+			}
+			if name != nil && role.Name == *name {
 				return &role, nil
 			}
 		}
