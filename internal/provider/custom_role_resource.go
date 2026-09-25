@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -552,6 +554,67 @@ func (r *CustomRoleResource) Create(ctx context.Context, req resource.CreateRequ
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
+type DeleteStatus string
+
+const (
+	DeleteStatusDeleted DeleteStatus = "deleted"
+	DeleteStatusBlocked DeleteStatus = "blocked"
+)
+
+type AccountMemberData struct {
+	UserName string `json:"user_name"`
+}
+
+type InvitationData struct {
+	AccountMember AccountMemberData `json:"account_member"`
+}
+
+type ApiKeyData struct {
+	KeyId                string `json:"key_id"`
+	AccountId            string `json:"account_id"`
+	Description          string `json:"description"`
+	IssuedAtEpochSeconds int64  `json:"issued_at_epoch_seconds"`
+}
+
+type DeleteCustomRoleData struct {
+	Status         DeleteStatus        `json:"status"`
+	AccountMembers []AccountMemberData `json:"account_members"`
+	Invitations    []InvitationData    `json:"invitations"`
+	ApiKeys        []ApiKeyData        `json:"api_keys"`
+}
+
+func (d DeleteCustomRoleData) formatActiveReferences() string {
+	var sections []string
+	if len(d.AccountMembers) > 0 {
+		lines := []string{"Account Members:"}
+		for _, member := range d.AccountMembers {
+			lines = append(lines, "- "+member.UserName)
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	if len(d.Invitations) > 0 {
+		lines := []string{"Invited Account Members:"}
+		for _, invite := range d.Invitations {
+			lines = append(lines, "- "+invite.AccountMember.UserName)
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	if len(d.ApiKeys) > 0 {
+		lines := []string{"API Keys:"}
+		for _, key := range d.ApiKeys {
+			issuedAt := time.Unix(key.IssuedAtEpochSeconds, 0).Format("2006-01-02 15:04:05 MST")
+			lines = append(lines,
+				"- Key ID: "+key.KeyId,
+				"  Account ID: "+key.AccountId,
+				"  Description: "+key.Description,
+				"  Issued At: "+issuedAt,
+			)
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	return strings.Join(sections, "\n")
+}
+
 func (r *CustomRoleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state CustomRoleResourceModel
 
@@ -583,9 +646,22 @@ func (r *CustomRoleResource) Delete(ctx context.Context, req resource.DeleteRequ
 		// Already deleted
 		return
 	}
+	body, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
-		body, _ := io.ReadAll(httpResp.Body)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete custom role, got non-200 response: %s %s", httpResp.Status, string(body)))
+		return
+	}
+
+	var deleteResponse DeleteCustomRoleData
+	err = json.Unmarshal(body, &deleteResponse)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from deleting custom role, got error: %v", err))
+		return
+	}
+	if deleteResponse.Status == DeleteStatusBlocked {
+		resp.Diagnostics.AddError("Custom Role Error", fmt.Sprintf(
+			"Unable to delete custom role, still in use:\n\n%s", deleteResponse.formatActiveReferences(),
+		))
 		return
 	}
 }
