@@ -10,6 +10,8 @@ import (
 )
 
 func TestCreateCustomRoleResource(t *testing.T) {
+	testAccPreCheckV2ApiKey(t)
+
 	roleName1 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	roleName2 := "terraform-provider-momento-test-" + acctest.RandString(8)
 
