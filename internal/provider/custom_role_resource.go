@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -324,6 +325,16 @@ func (r *CustomRoleResource) Schema(ctx context.Context, req resource.SchemaRequ
 									MarkdownDescription: "The actions this rule allows.",
 									Required:            true,
 									ElementType:         types.StringType,
+									Validators: []validator.List{
+										listvalidator.ValueStringsAre(
+											stringvalidator.OneOf(
+												string(PermissionActionRead),
+												string(PermissionActionWrite),
+												string(PermissionActionList),
+												string(PermissionActionInvoke),
+											),
+										),
+									},
 								},
 								"items": schema.SingleNestedAttribute{
 									MarkdownDescription: "Which items this rule applies to. Exactly one of `all`, `key`, or `key_prefix` must be set.",
