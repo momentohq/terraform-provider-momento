@@ -439,7 +439,7 @@ func nameSelectorData(m *NameSelectorModel) any {
 	if m == nil {
 		return nil
 	}
-	if m.All.ValueBool() == true {
+	if m.All.ValueBool() {
 		return "*"
 	}
 	return map[string]any{"name": m.Name.ValueString()}
@@ -449,7 +449,7 @@ func nameOrPrefixSelectorData(m *NameOrPrefixSelectorModel) any {
 	if m == nil {
 		return nil
 	}
-	if m.All.ValueBool() == true {
+	if m.All.ValueBool() {
 		return "*"
 	} else if !m.Name.IsNull() && !m.Name.IsUnknown() {
 		return map[string]any{"name": m.Name.ValueString()}
@@ -463,7 +463,7 @@ func itemSelectorData(m *ItemSelectorModel) any {
 	if m == nil {
 		return nil
 	}
-	if m.All.ValueBool() == true {
+	if m.All.ValueBool() {
 		return "*"
 	} else if !m.KeyName.IsNull() && !m.KeyName.IsUnknown() {
 		return map[string]any{"key": m.KeyName.ValueString()}
