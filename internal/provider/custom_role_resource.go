@@ -814,13 +814,9 @@ func (r *CustomRoleResource) Read(ctx context.Context, req resource.ReadRequest,
 	foundCustomRole, err := describeCustomRole(client, state.Id.ValueStringPointer(), state.Name.ValueStringPointer(), r.httpMgaEndpoint, r.httpAuthToken)
 	if foundCustomRole == nil && err == nil {
 		// Custom role not found, remove from state
-		var identifierString string
-		switch {
-		case !state.Id.IsNull() && !state.Name.IsNull():
-			identifierString = fmt.Sprintf("ID \"%s\" or name \"%s\"", state.Id.ValueString(), state.Name.ValueString())
-		case !state.Name.IsNull():
-			identifierString = fmt.Sprintf("name \"%s\"", state.Name.ValueString())
-		default:
+		identifierString := fmt.Sprintf("name \"%s\"", state.Name.ValueString())
+		if !state.Id.IsNull() {
+			// Prioritize ID if available; name can change
 			identifierString = fmt.Sprintf("ID \"%s\"", state.Id.ValueString())
 		}
 		resp.Diagnostics.AddWarning("Custom Role Not Found", fmt.Sprintf("The custom role with %s was not found. It may have been deleted outside of Terraform. Removing from state.", identifierString))
@@ -988,8 +984,11 @@ func describeCustomRole(client http.Client, id *string, name *string, httpMgaEnd
 			if id != nil && role.Id == *id {
 				return &role, nil
 			}
-			if name != nil && role.Name == *name {
-				return &role, nil
+			if id == nil {
+				// Prioritize ID if available; name can change
+				if name != nil && role.Name == *name {
+					return &role, nil
+				}
 			}
 		}
 		nextToken = customRolesList.NextToken
