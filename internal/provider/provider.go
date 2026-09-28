@@ -37,11 +37,12 @@ type MomentoProviderModel struct {
 }
 
 type MomentoClients struct {
-	cache         momento.CacheClient
-	leaderboard   momento.PreviewLeaderboardClient
-	httpClient    *http.Client
-	httpEndpoint  string
-	httpAuthToken string
+	cache           momento.CacheClient
+	leaderboard     momento.PreviewLeaderboardClient
+	httpClient      *http.Client
+	httpEndpoint    string
+	httpMgaEndpoint string
+	httpAuthToken   string
 }
 
 func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -206,22 +207,29 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Create an HTTP client for resources that use Momento HTTP APIs
 	httpClient := &http.Client{}
 	httpEndpoint := fmt.Sprintf("https://api.cache.%s", endpoint)
+	environment := "prod"
+	if strings.HasSuffix(endpoint, ".preprod.a.momentohq.com") {
+		environment = "preprod"
+	}
+	httpMgaEndpoint := fmt.Sprintf("https://mga.registry.%s.a.momentohq.com", environment)
 
 	// Make the Momento client available during DataSource and Resource
 	// type Configure methods.
 	resp.DataSourceData = MomentoClients{
-		cache:         cacheClient,
-		leaderboard:   leaderboardClient,
-		httpClient:    httpClient,
-		httpEndpoint:  httpEndpoint,
-		httpAuthToken: httpAuthToken,
+		cache:           cacheClient,
+		leaderboard:     leaderboardClient,
+		httpClient:      httpClient,
+		httpEndpoint:    httpEndpoint,
+		httpMgaEndpoint: httpMgaEndpoint,
+		httpAuthToken:   httpAuthToken,
 	}
 	resp.ResourceData = MomentoClients{
-		cache:         cacheClient,
-		leaderboard:   leaderboardClient,
-		httpClient:    httpClient,
-		httpEndpoint:  httpEndpoint,
-		httpAuthToken: httpAuthToken,
+		cache:           cacheClient,
+		leaderboard:     leaderboardClient,
+		httpClient:      httpClient,
+		httpEndpoint:    httpEndpoint,
+		httpMgaEndpoint: httpMgaEndpoint,
+		httpAuthToken:   httpAuthToken,
 	}
 }
 
@@ -231,6 +239,7 @@ func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewLeaderboardResource,
 		NewValkeyClusterResource,
 		NewObjectStoreResource,
+		NewCustomRoleResource,
 	}
 }
 
