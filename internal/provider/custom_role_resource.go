@@ -411,6 +411,17 @@ func (r *CustomRoleResource) Configure(ctx context.Context, req resource.Configu
 		return
 	}
 
+	if !clients.usingV2ApiKey {
+		resp.Diagnostics.AddError(
+			"Momento V2 API Key Required",
+			"The momento_custom_role resource requires a V2 API key."+
+				" Set v2_api_key and v2_api_endpoint in the provider configuration,"+
+				" or set MOMENTO_API_KEY alongside MOMENTO_ENDPOINT in your environment variables.",
+		)
+
+		return
+	}
+
 	r.httpClient = clients.httpClient
 	r.httpMgaEndpoint = clients.httpMgaEndpoint
 	r.httpAuthToken = clients.httpAuthToken

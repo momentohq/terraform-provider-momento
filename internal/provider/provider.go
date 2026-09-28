@@ -43,6 +43,7 @@ type MomentoClients struct {
 	httpEndpoint    string
 	httpMgaEndpoint string
 	httpAuthToken   string
+	usingV2ApiKey   bool
 }
 
 func (p *MomentoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -58,7 +59,7 @@ func (p *MomentoProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Optional:            true,
 			},
 			"v2_api_key": schema.StringAttribute{
-				MarkdownDescription: "Momento V2 API Key. May also be provided via MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable.",
+				MarkdownDescription: "Momento V2 API Key. May also be provided via MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable. Required for momento_custom_role resources.",
 				Optional:            true,
 			},
 			"v2_api_endpoint": schema.StringAttribute{
@@ -148,6 +149,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	var credError error
 	var httpAuthToken string
 
+	usingV2ApiKey := false
 	if endpoint != "" && v2ApiKey != "" {
 		httpAuthToken = v2ApiKey
 		credProvider, credError = auth.FromApiKeyV2(auth.ApiKeyV2Props{ApiKey: v2ApiKey, Endpoint: endpoint})
@@ -160,6 +162,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 			)
 			return
 		}
+		usingV2ApiKey = true
 	} else {
 		credProvider, credError = auth.FromDisposableToken(authToken)
 		if credError != nil {
@@ -222,6 +225,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		httpEndpoint:    httpEndpoint,
 		httpMgaEndpoint: httpMgaEndpoint,
 		httpAuthToken:   httpAuthToken,
+		usingV2ApiKey:   usingV2ApiKey,
 	}
 	resp.ResourceData = MomentoClients{
 		cache:           cacheClient,
@@ -230,6 +234,7 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 		httpEndpoint:    httpEndpoint,
 		httpMgaEndpoint: httpMgaEndpoint,
 		httpAuthToken:   httpAuthToken,
+		usingV2ApiKey:   usingV2ApiKey,
 	}
 }
 
