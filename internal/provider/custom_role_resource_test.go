@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -65,6 +66,39 @@ func TestCreateCustomRoleResource(t *testing.T) {
 				ResourceName:      "momento_custom_role.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+			// Delete testing automatically occurs in TestCase
+		},
+	})
+}
+
+func TestCreateCustomRoleResourceWithV1(t *testing.T) {
+	testAccPreCheckV1ApiKey(t)
+
+	roleName1 := "terraform-provider-momento-test-" + acctest.RandString(8)
+	roleName2 := "terraform-provider-momento-test-" + acctest.RandString(8)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		// Each TestStep represents one `terraform apply`
+		Steps: []resource.TestStep{
+			// Creating a custom role should require a v2 API key
+			{
+				Config:      testAccCustomRoleConfig(roleName1),
+				ExpectError: regexp.MustCompile("V2 API Key Required"),
+			},
+			// Updating a custom role should require a v2 API key
+			{
+				Config:      testAccCustomRoleConfig(roleName2),
+				ExpectError: regexp.MustCompile("V2 API Key Required"),
+			},
+			// Importing a custom role should require a v2 API Key
+			{
+				ResourceName:  "momento_custom_role.test",
+				ImportState:   true,
+				ImportStateId: "r-some-role",
+				ExpectError:   regexp.MustCompile("V2 API Key Required"),
 			},
 			// Delete testing automatically occurs in TestCase
 		},

@@ -29,3 +29,11 @@ func testAccPreCheckV2ApiKey(t *testing.T) {
 		t.Skip("MOMENTO_ENDPOINT not set; this test requires a v2 API key")
 	}
 }
+
+// testAccPreCheckV1ApiKey skips tests that are only intended to run with a
+// v1 API key, legacy API key, or disposable token.
+func testAccPreCheckV1ApiKey(t *testing.T) {
+	if os.Getenv("MOMENTO_ENDPOINT") != "" {
+		t.Skip("MOMENTO_ENDPOINT set; this test verifies rejection behavior when a v2 API key is required but absent")
+	}
+}
