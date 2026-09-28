@@ -1,4 +1,4 @@
-# Manage a Momento custom role.
+# Manage a Momento custom role. Requires a V2 API key (and V2 endpoint).
 # Full permission set example on https://docs.momentohq.com/platform/authentication/roles-http-api#full-permission-set-example:
 resource "momento_custom_role" "example" {
   name        = "custom-role-name"

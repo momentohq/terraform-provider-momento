@@ -58,7 +58,7 @@ func (p *MomentoProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Optional:            true,
 			},
 			"v2_api_key": schema.StringAttribute{
-				MarkdownDescription: "Momento V2 API Key. May also be provided via MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable.",
+				MarkdownDescription: "Momento V2 API Key. May also be provided via MOMENTO_API_KEY environment variable alongside the MOMENTO_ENDPOINT environment variable. V2 API key is required if you are creating a Custom Role resource, optional otherwise",
 				Optional:            true,
 			},
 			"v2_api_endpoint": schema.StringAttribute{
