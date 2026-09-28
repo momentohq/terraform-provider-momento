@@ -79,7 +79,7 @@ resource "momento_object_store" "example" {
 ### Read-Only
 
 - `id` (String) The ID of the Object Store.
-- `per_router_throttling_limits` (Attributes) The per-router-node throttling limits (aggregate limits divided by router_count) sent to the Momento API. (see [below for nested schema](#nestedatt--per_router_throttling_limits))
+- `per_router_throttling_limits` (Attributes) The per-router-node throttling limits (ceiling of aggregate limits divided by router_count) sent to the Momento API. (see [below for nested schema](#nestedatt--per_router_throttling_limits))
 - `router_count` (Number) The number of Momento router nodes backing this object store, computed from the /endpoints API.
 
 <a id="nestedatt--access_logging_config"></a>
