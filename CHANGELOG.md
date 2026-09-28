@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/momentohq/terraform-provider-momento/compare/v0.7.0...v0.7.1) (2026-09-28)
+
+
+### Miscellaneous
+
+* **role:** require v2 API key ([#87](https://github.com/momentohq/terraform-provider-momento/issues/87)) ([4d13931](https://github.com/momentohq/terraform-provider-momento/commit/4d13931c4bad14b170e1fa229377de033453bed1))
+
 ## [0.7.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.6.3...v0.7.0) (2026-09-28)
 
 
