@@ -1,0 +1,15 @@
+# Manage a Momento API key. Requires a V2 API key (and V2 endpoint).
+resource "momento_api_key" "example" {
+  description = "This is my sample Momento API key created with Terraform."
+  role_id     = "r-viewer"
+}
+
+output "key_id" {
+  type        = string
+  description = "ID of my generated API key."
+  value       = momento_api_key.example.key_id
+}
+
+# You can access the generated API key
+# (e.g. to pass it to your secrets manager resource)
+# via momento_api_key.example.api_key
