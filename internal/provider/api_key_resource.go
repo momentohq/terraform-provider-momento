@@ -34,11 +34,13 @@ type ApiKeyResource struct {
 
 // ApiKeyResourceModel describes the resource data model.
 type ApiKeyResourceModel struct {
-	KeyId       types.String `tfsdk:"key_id"`
-	ApiKey      types.String `tfsdk:"api_key"`
-	RoleId      types.String `tfsdk:"role_id"`
-	Description types.String `tfsdk:"description"`
-	Expiry      types.Int64  `tfsdk:"expiry"`
+	KeyId               types.String `tfsdk:"key_id"`
+	ApiKey              types.String `tfsdk:"api_key"`
+	RefreshToken        types.String `tfsdk:"refresh_token"`
+	RoleId              types.String `tfsdk:"role_id"`
+	Description         types.String `tfsdk:"description"`
+	Expiry              types.Int64  `tfsdk:"expiry"`
+	ExcludeRefreshToken types.Bool   `tfsdk:"exclude_refresh_token"`
 }
 
 func (r *ApiKeyResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -66,6 +68,14 @@ func (r *ApiKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"refresh_token": schema.StringAttribute{
+				MarkdownDescription: "The single-use refresh token for rotating the API Key.",
+				Computed:            true,
+				Sensitive:           true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"role_id": schema.StringAttribute{
 				MarkdownDescription: "The ID of the API Key's role.",
 				Required:            true,
@@ -76,6 +86,10 @@ func (r *ApiKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			},
 			"expiry": schema.Int64Attribute{
 				MarkdownDescription: "When the key should expire. An integer number of seconds since the Unix epoch.",
+				Optional:            true,
+			},
+			"exclude_refresh_token": schema.BoolAttribute{
+				MarkdownDescription: "Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token.",
 				Optional:            true,
 			},
 		},
@@ -125,8 +139,9 @@ type ApiKeyInfo struct {
 }
 
 type ApiKeyResponse struct {
-	ApiKey  string     `json:"api_key"`
-	KeyInfo ApiKeyInfo `json:"key_info"`
+	ApiKey       string     `json:"api_key"`
+	RefreshToken *string    `json:"refresh_token"`
+	KeyInfo      ApiKeyInfo `json:"key_info"`
 }
 
 func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -143,14 +158,16 @@ func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	postUrl := fmt.Sprintf("%s/api-keys", r.httpMgaEndpoint)
 
 	requestMap := map[string]any{
-		"description":           plan.Description.ValueString(),
-		"role_id":               plan.RoleId.ValueString(),
-		"exclude_refresh_token": true,
+		"description": plan.Description.ValueString(),
+		"role_id":     plan.RoleId.ValueString(),
 	}
-	if plan.Expiry.IsNull() || plan.Expiry.IsUnknown() {
+	if plan.Expiry.IsNull() {
 		requestMap["expiry"] = "never"
 	} else {
 		requestMap["expiry"] = plan.Expiry.ValueInt64()
+	}
+	if !plan.ExcludeRefreshToken.IsNull() {
+		requestMap["exclude_refresh_token"] = plan.ExcludeRefreshToken.ValueBool()
 	}
 
 	requestJson, err := json.Marshal(requestMap)
@@ -189,6 +206,7 @@ func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	plan.KeyId = types.StringValue(apiKey.KeyInfo.KeyId)
 	plan.ApiKey = types.StringValue(apiKey.ApiKey)
+	plan.RefreshToken = types.StringPointerValue(apiKey.RefreshToken)
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

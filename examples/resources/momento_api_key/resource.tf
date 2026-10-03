@@ -10,6 +10,6 @@ output "key_id" {
   value       = momento_api_key.example.key_id
 }
 
-# You can access the generated API key
-# (e.g. to pass it to your secrets manager resource)
-# via momento_api_key.example.api_key
+# You can access the generated API key and its refresh token
+# (e.g. to pass them to your secrets manager resource)
+# via momento_api_key.example.api_key and momento_api_key.example.refresh_token
