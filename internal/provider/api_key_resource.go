@@ -52,7 +52,6 @@ func (r *ApiKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 		MarkdownDescription: "An API Key.",
 
 		Attributes: map[string]schema.Attribute{
-			// The testing framework requires an id attribute to be present in every data source and resource
 			"key_id": schema.StringAttribute{
 				MarkdownDescription: "The ID of the API Key.",
 				Computed:            true,
@@ -130,12 +129,12 @@ func (r *ApiKeyResource) Configure(ctx context.Context, req resource.ConfigureRe
 }
 
 type ApiKeyInfo struct {
-	KeyId       string  `json:"key_id"`
-	AccountId   string  `json:"account_id"`
-	Description string  `json:"description"`
-	RoleId      string  `json:"role_id"`
-	ExpiresAt   *uint64 `json:"expires_at_epoch_seconds"`
-	IssuedAt    uint64  `json:"issued_at_epoch_seconds"`
+	KeyId       string `json:"key_id"`
+	AccountId   string `json:"account_id"`
+	Description string `json:"description"`
+	RoleId      string `json:"role_id"`
+	ExpiresAt   *int64 `json:"expires_at_epoch_seconds"`
+	IssuedAt    int64  `json:"issued_at_epoch_seconds"`
 }
 
 type ApiKeyResponse struct {
@@ -262,7 +261,7 @@ func (r *ApiKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	// Find API key
 	client := *r.httpClient
-	foundApiKeyInfo, err := describeApiKey(client, state.KeyId.ValueStringPointer(), r.httpMgaEndpoint, r.httpAuthToken)
+	foundApiKeyInfo, err := describeApiKey(client, state.KeyId.ValueString(), r.httpMgaEndpoint, r.httpAuthToken)
 	if foundApiKeyInfo == nil && err == nil {
 		// API key not found, remove from state
 		resp.Diagnostics.AddWarning("API Key Not Found", fmt.Sprintf("The API key with ID \"%s\" was not found. It may have been deleted outside of Terraform. Removing from state.", state.KeyId.ValueString()))
@@ -279,15 +278,6 @@ func (r *ApiKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 }
 
 func (r *ApiKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var state ApiKeyResourceModel
-
-	// Read Terraform prior state data into the model
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
 	resp.Diagnostics.AddError("API Key Error", "API Key resource does not support updates. Instead, please revoke/destroy your key when you're ready and generate a new one.")
 }
 
@@ -330,7 +320,7 @@ func listApiKeys(client http.Client, httpMgaEndpoint string, httpAuthToken strin
 	return &apiKeysList, nil
 }
 
-func describeApiKey(client http.Client, keyId *string, httpMgaEndpoint string, httpAuthToken string) (*ApiKeyInfo, error) {
+func describeApiKey(client http.Client, keyId string, httpMgaEndpoint string, httpAuthToken string) (*ApiKeyInfo, error) {
 	var nextToken *string
 	for {
 		apiKeysList, err := listApiKeys(client, httpMgaEndpoint, httpAuthToken, nextToken)
@@ -338,7 +328,7 @@ func describeApiKey(client http.Client, keyId *string, httpMgaEndpoint string, h
 			return nil, fmt.Errorf("error listing API keys: %v", err)
 		}
 		for _, key := range apiKeysList.KeyInfo {
-			if key.KeyId == *keyId {
+			if key.KeyId == keyId {
 				return &key, nil
 			}
 		}
