@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timetypes/timetypes"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -34,13 +37,13 @@ type ApiKeyResource struct {
 
 // ApiKeyResourceModel describes the resource data model.
 type ApiKeyResourceModel struct {
-	KeyId               types.String `tfsdk:"key_id"`
-	ApiKey              types.String `tfsdk:"api_key"`
-	RefreshToken        types.String `tfsdk:"refresh_token"`
-	RoleId              types.String `tfsdk:"role_id"`
-	Description         types.String `tfsdk:"description"`
-	Expiry              types.Int64  `tfsdk:"expiry"`
-	ExcludeRefreshToken types.Bool   `tfsdk:"exclude_refresh_token"`
+	KeyId               types.String      `tfsdk:"key_id"`
+	ApiKey              types.String      `tfsdk:"api_key"`
+	RefreshToken        types.String      `tfsdk:"refresh_token"`
+	RoleId              types.String      `tfsdk:"role_id"`
+	Description         types.String      `tfsdk:"description"`
+	Expiry              timetypes.RFC3339 `tfsdk:"expiry"`
+	ExcludeRefreshToken types.Bool        `tfsdk:"exclude_refresh_token"`
 }
 
 func (r *ApiKeyResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -83,9 +86,10 @@ func (r *ApiKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "What the API Key is for.",
 				Required:            true,
 			},
-			"expiry": schema.Int64Attribute{
-				MarkdownDescription: "When the key should expire. An integer number of seconds since the Unix epoch.",
+			"expiry": schema.StringAttribute{
+				MarkdownDescription: "When the key should expire, in RFC 3339 (ISO) format, e.g. `2030-01-01T00:00:00Z`. If omitted, the key never expires.",
 				Optional:            true,
+				CustomType:          timetypes.RFC3339Type{},
 			},
 			"exclude_refresh_token": schema.BoolAttribute{
 				MarkdownDescription: "Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token.",
@@ -163,7 +167,20 @@ func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	if plan.Expiry.IsNull() {
 		requestMap["expiry"] = "never"
 	} else {
-		requestMap["expiry"] = plan.Expiry.ValueInt64()
+		expiry, diags := plan.Expiry.ValueRFC3339Time()
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !expiry.After(time.Now()) {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("expiry"),
+				"Invalid Expiry",
+				fmt.Sprintf("Expiry is in the past: %s", plan.Expiry.ValueString()),
+			)
+			return
+		}
+		requestMap["expiry"] = expiry.Unix()
 	}
 	if !plan.ExcludeRefreshToken.IsNull() {
 		requestMap["exclude_refresh_token"] = plan.ExcludeRefreshToken.ValueBool()

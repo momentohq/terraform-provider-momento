@@ -2,6 +2,11 @@
 resource "momento_api_key" "example" {
   description = "This is my sample Momento API key created with Terraform."
   role_id     = "r-viewer"
+  expiry      = time_offset.key_expiry.rfc3339
+}
+
+resource "time_offset" "key_expiry" {
+  offset_hours = 6
 }
 
 output "key_id" {

@@ -18,7 +18,7 @@ func TestCreateApiKeyResource(t *testing.T) {
 	keyDescription2 := "terraform provider momento test " + acctest.RandString(8)
 	roleId1 := "r-viewer"
 	roleId2 := "r-operator"
-	expiry := time.Now().Add(1 * time.Hour).Unix()
+	expiry := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -145,6 +145,30 @@ func TestCreateApiKeyResource(t *testing.T) {
 			},
 		},
 	})
+
+	// API key with an expiry in the past:
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccApiKeyConfig(keyDescription1, roleId1, time.Now().Add(-1*time.Hour).Format(time.RFC3339)),
+				ExpectError: regexp.MustCompile("Expiry is in the past"),
+			},
+		},
+	})
+
+	// API key with an unparseable expiry:
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccApiKeyConfig(keyDescription1, roleId1, "today i guess"),
+				ExpectError: regexp.MustCompile("Invalid RFC"),
+			},
+		},
+	})
 }
 
 func TestCreateApiKeyResourceWithV1(t *testing.T) {
@@ -152,7 +176,7 @@ func TestCreateApiKeyResourceWithV1(t *testing.T) {
 
 	keyDescription := "terraform-provider-momento-test-" + acctest.RandString(8)
 	roleId := "r-viewer"
-	expiry := time.Now().Add(1 * time.Hour).Unix()
+	expiry := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -169,23 +193,23 @@ func TestCreateApiKeyResourceWithV1(t *testing.T) {
 	})
 }
 
-func testAccApiKeyConfig(description string, roleId string, expiry int64) string {
+func testAccApiKeyConfig(description string, roleId string, expiry string) string {
 	return fmt.Sprintf(`
 resource "momento_api_key" "test" {
   description = %[1]q
   role_id = %[2]q
-  expiry = %[3]d
+  expiry = %[3]q
 }
 `, description, roleId, expiry)
 }
 
-func testAccApiKeyConfigWithExcludeRefreshSpecified(description string, expiry int64, excludeRefreshToken bool) string {
+func testAccApiKeyConfigWithExcludeRefreshSpecified(description string, expiry string, excludeRefreshToken bool) string {
 	return fmt.Sprintf(`
 resource "momento_api_key" "test" {
   description = %[1]q
   role_id = "r-viewer"
   exclude_refresh_token = %[2]t
-  expiry = %[3]d
+  expiry = %[3]q
 }
 `, description, excludeRefreshToken, expiry)
 }

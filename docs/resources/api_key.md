@@ -17,6 +17,11 @@ An API Key.
 resource "momento_api_key" "example" {
   description = "This is my sample Momento API key created with Terraform."
   role_id     = "r-viewer"
+  expiry      = time_offset.key_expiry.rfc3339
+}
+
+resource "time_offset" "key_expiry" {
+  offset_hours = 6
 }
 
 output "key_id" {
@@ -41,7 +46,7 @@ output "key_id" {
 ### Optional
 
 - `exclude_refresh_token` (Boolean) Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token.
-- `expiry` (Number) When the key should expire. An integer number of seconds since the Unix epoch.
+- `expiry` (String) When the key should expire, in RFC 3339 (ISO) format, e.g. `2030-01-01T00:00:00Z`. If omitted, the key never expires.
 
 ### Read-Only
 
