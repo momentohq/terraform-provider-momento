@@ -203,13 +203,24 @@ func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	if httpResp != nil {
 		defer func() { _ = httpResp.Body.Close() }()
 	}
+
+	const orphanWarning = "The API key may have been created but could not be tracked by Terraform; revoke it manually if it exists."
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to generate API key, got error: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to generate API key, got error: %s. %s", err, orphanWarning))
 		return
 	}
-	body, _ := io.ReadAll(httpResp.Body)
+	body, readErr := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to generate API key, got non-200 response: %s %s", httpResp.Status, string(body)))
+		msg := fmt.Sprintf("Unable to generate API key, got non-200 response: %s %s", httpResp.Status, string(body))
+		if httpResp.StatusCode >= 500 {
+			msg += ". " + orphanWarning
+		}
+		resp.Diagnostics.AddError("Client Error", msg)
+		return
+	}
+	if readErr != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
+			"Unable to read response from generating API key, got error: %s. %s", readErr, orphanWarning))
 		return
 	}
 
@@ -217,9 +228,14 @@ func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	var apiKey ApiKeyResponse
 	err = json.Unmarshal(body, &apiKey)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from generating API key, got error: %v", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from generating API key, got error: %v. %s", err, orphanWarning))
 		return
 	}
+	if apiKey.KeyInfo.KeyId == "" {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Response from generating API key did not include a key ID. %s", orphanWarning))
+		return
+	}
+
 	plan.KeyId = types.StringValue(apiKey.KeyInfo.KeyId)
 	plan.ApiKey = types.StringValue(apiKey.ApiKey)
 	plan.RefreshToken = types.StringPointerValue(apiKey.RefreshToken)
