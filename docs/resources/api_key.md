@@ -29,7 +29,6 @@ resource "time_offset" "key_expiry" {
 }
 
 output "key_id" {
-  type        = string
   description = "ID of my generated API key."
   value       = momento_api_key.example.key_id
 }
