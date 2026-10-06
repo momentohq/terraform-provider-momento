@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timetypes/timetypes"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -81,33 +81,21 @@ func (r *ApiKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"role_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the API Key's role. Changing this revokes the current key and generates a new one.",
+				MarkdownDescription: "The ID of the API Key's role.",
 				Required:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
 			},
 			"description": schema.StringAttribute{
-				MarkdownDescription: "What the API Key is for. Changing this revokes the current key and generates a new one.",
+				MarkdownDescription: "What the API Key is for.",
 				Required:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
 			},
 			"expiry": schema.StringAttribute{
-				MarkdownDescription: "When the key should expire, in RFC 3339 (ISO) format, e.g. `2030-01-01T00:00:00Z`. If omitted, the key never expires. Changing this revokes the current key and generates a new one.",
+				MarkdownDescription: "When the key should expire, in RFC 3339 (ISO) format, e.g. `2030-01-01T00:00:00Z`. If omitted, the key never expires.",
 				Optional:            true,
 				CustomType:          timetypes.RFC3339Type{},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
 			},
 			"exclude_refresh_token": schema.BoolAttribute{
-				MarkdownDescription: "Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token. Changing this revokes the current key and generates a new one.",
+				MarkdownDescription: "Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token.",
 				Optional:            true,
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.RequiresReplace(),
-				},
 			},
 		},
 	}
@@ -181,17 +169,9 @@ func (r *ApiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	if plan.Expiry.IsNull() {
 		requestMap["expiry"] = "never"
 	} else {
-		expiry, diags := plan.Expiry.ValueRFC3339Time()
+		expiry, diags := validateExpiry(plan.Expiry)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
-			return
-		}
-		if !expiry.After(time.Now()) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("expiry"),
-				"Invalid Expiry",
-				fmt.Sprintf("Expiry is in the past: %s", plan.Expiry.ValueString()),
-			)
 			return
 		}
 		requestMap["expiry"] = expiry.Unix()
@@ -325,51 +305,56 @@ func (r *ApiKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 }
 
 func (r *ApiKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
-		// Skip Create (state null) and Delete (plan null)
+	if req.Plan.Raw.IsNull() {
 		return
 	}
 
-	var state, plan ApiKeyResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	var plan ApiKeyResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if plan.RoleId.Equal(state.RoleId) && plan.Description.Equal(state.Description) && plan.Expiry.Equal(state.Expiry) && plan.ExcludeRefreshToken.Equal(state.ExcludeRefreshToken) {
-		return
-	}
-
-	if !plan.Expiry.IsNull() && !plan.Expiry.IsUnknown() {
-		expiry, diags := plan.Expiry.ValueRFC3339Time()
-		resp.Diagnostics.Append(diags...)
+	if req.State.Raw.IsNull() { // on Create:
+		if !plan.Expiry.IsNull() && !plan.Expiry.IsUnknown() {
+			_, diags := validateExpiry(plan.Expiry)
+			resp.Diagnostics.Append(diags...)
+		}
+	} else { // on Update:
+		var state ApiKeyResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		if !expiry.After(time.Now()) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("expiry"),
-				"Invalid Expiry",
-				fmt.Sprintf("Expiry is in the past: %s", plan.Expiry.ValueString()),
-			)
-			return
+
+		if !plan.RoleId.Equal(state.RoleId) || !plan.Description.Equal(state.Description) || !plan.Expiry.Equal(state.Expiry) || !plan.ExcludeRefreshToken.Equal(state.ExcludeRefreshToken) {
+			resp.Diagnostics.AddWarning(
+				"API Key Cannot Be Updated",
+				fmt.Sprintf(
+					"API Key resource does not support updates, so applying this plan will fail for key %s."+
+						" Instead, please revoke/destroy your key when you're ready and generate a new one.",
+					state.KeyId.ValueString()))
 		}
 	}
+}
 
-	resp.Diagnostics.AddWarning(
-		"API Key Will Be Revoked",
-		fmt.Sprintf("Applying this plan will REVOKE your current API Key:"+
-			"\n\n  Key ID: %s\n  Description: %s\n  Role ID: %s"+
-			"\n\nIt will immediately stop working and, if used anywhere else, will need to be manually replaced."+
-			" If you're ready to revoke and re-generate, consider using `lifecycle { create_before_destroy = true }` for safety.",
-			state.KeyId.ValueString(), state.Description.ValueString(), state.RoleId.ValueString()),
-	)
+func validateExpiry(expiry timetypes.RFC3339) (time.Time, diag.Diagnostics) {
+	expiryTime, diags := expiry.ValueRFC3339Time()
+	if diags.HasError() {
+		return expiryTime, diags
+	}
+	if !expiryTime.After(time.Now()) {
+		diags.AddAttributeError(
+			path.Root("expiry"),
+			"Invalid Expiry",
+			fmt.Sprintf("Expiry is in the past: %s", expiry.ValueString()),
+		)
+	}
+	return expiryTime, diags
 }
 
 func (r *ApiKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Backup error; every configurable attribute requires replacement, so Terraform should never call Update.
-	resp.Diagnostics.AddError("API Key Error", "API Key resource does not support updates. Please report this issue to the provider developers.")
+	resp.Diagnostics.AddError("API Key Cannot Be Updated", "API Key resource does not support updates. Instead, please revoke/destroy your key when you're ready and generate a new one.")
 }
 
 type ListApiKeysResponse struct {
