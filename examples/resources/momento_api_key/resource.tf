@@ -1,5 +1,9 @@
 # Manage a Momento API key. Requires a V2 API key (and V2 endpoint).
 resource "momento_api_key" "example" {
+  lifecycle {
+    # If a new/updated API key fails to create, keep the old one:
+    create_before_destroy = true
+  }
   description = "This is my sample Momento API key created with Terraform."
   role_id     = "r-viewer"
   expiry      = time_offset.key_expiry.rfc3339

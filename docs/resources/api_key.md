@@ -15,6 +15,10 @@ An API Key.
 ```terraform
 # Manage a Momento API key. Requires a V2 API key (and V2 endpoint).
 resource "momento_api_key" "example" {
+  lifecycle {
+    # If a new/updated API key fails to create, keep the old one:
+    create_before_destroy = true
+  }
   description = "This is my sample Momento API key created with Terraform."
   role_id     = "r-viewer"
   expiry      = time_offset.key_expiry.rfc3339
@@ -40,13 +44,13 @@ output "key_id" {
 
 ### Required
 
-- `description` (String) What the API Key is for.
-- `role_id` (String) The ID of the API Key's role.
+- `description` (String) What the API Key is for. Changing this revokes the current key and generates a new one.
+- `role_id` (String) The ID of the API Key's role. Changing this revokes the current key and generates a new one.
 
 ### Optional
 
-- `exclude_refresh_token` (Boolean) Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token.
-- `expiry` (String) When the key should expire, in RFC 3339 (ISO) format, e.g. `2030-01-01T00:00:00Z`. If omitted, the key never expires.
+- `exclude_refresh_token` (Boolean) Set to true to generate the key without a refresh token. Keys without an expiry are never given a refresh token. Changing this revokes the current key and generates a new one.
+- `expiry` (String) When the key should expire, in RFC 3339 (ISO) format, e.g. `2030-01-01T00:00:00Z`. If omitted, the key never expires. Changing this revokes the current key and generates a new one.
 
 ### Read-Only
 

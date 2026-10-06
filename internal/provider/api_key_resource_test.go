@@ -41,18 +41,48 @@ func TestCreateApiKeyResource(t *testing.T) {
 					resource.TestCheckResourceAttrSet("momento_api_key.test", "refresh_token"),
 				),
 			},
-			// Updating an API key should not be allowed
+			// Re-applying an unchanged config should not replace the key
 			{
-				Config:      testAccApiKeyConfig(keyDescription2, roleId1, expiry),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfig(keyDescription1, roleId1, expiry),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			// Updating an API key should revoke the old key and create a new one
+			{
+				Config: testAccApiKeyConfig(keyDescription2, roleId1, expiry),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_api_key.test", "description", keyDescription2),
+				),
 			},
 			{
-				Config:      testAccApiKeyConfig(keyDescription1, roleId2, expiry),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfig(keyDescription2, roleId2, expiry),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_api_key.test", "role_id", roleId2),
+				),
 			},
 			{
-				Config:      testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, true),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_api_key.test", "exclude_refresh_token", "true"),
+				),
 			},
 			// Delete testing automatically occurs in TestCase
 		},
@@ -80,12 +110,26 @@ func TestCreateApiKeyResource(t *testing.T) {
 				),
 			},
 			{
-				Config:      testAccApiKeyConfig(keyDescription1, roleId1, expiry),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfig(keyDescription1, roleId1, expiry),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_api_key.test", "exclude_refresh_token"),
+				),
 			},
 			{
-				Config:      testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, false),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, false),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_api_key.test", "exclude_refresh_token", "false"),
+				),
 			},
 		},
 	})
@@ -112,12 +156,26 @@ func TestCreateApiKeyResource(t *testing.T) {
 				),
 			},
 			{
-				Config:      testAccApiKeyConfig(keyDescription1, roleId1, expiry),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfig(keyDescription1, roleId1, expiry),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_api_key.test", "exclude_refresh_token"),
+				),
 			},
 			{
-				Config:      testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, true),
-				ExpectError: regexp.MustCompile("API Key Error"),
+				Config: testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_api_key.test", "exclude_refresh_token", "true"),
+				),
 			},
 		},
 	})
@@ -141,6 +199,17 @@ func TestCreateApiKeyResource(t *testing.T) {
 					resource.TestCheckResourceAttrSet("momento_api_key.test", "key_id"),
 					resource.TestCheckResourceAttrSet("momento_api_key.test", "api_key"),
 					resource.TestCheckNoResourceAttr("momento_api_key.test", "refresh_token"),
+				),
+			},
+			{
+				Config: testAccApiKeyConfigWithoutExpiry(keyDescription2, roleId1, true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_api_key.test", "DestroyBeforeCreate"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("momento_api_key.test", "description", keyDescription2),
 				),
 			},
 		},
