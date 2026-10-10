@@ -246,6 +246,8 @@ func (p *MomentoProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewObjectStoreResource,
 		NewCustomRoleResource,
 		NewApiKeyResource,
+		NewCapacityPoolResource,
+		NewValkeyDatabaseResource,
 	}
 }
 
