@@ -13,11 +13,29 @@ A Valkey Database.
 ## Example Usage
 
 ```terraform
-# First create a Capacity Pool via Terraform, the Momento CLI (`momento pool create -n pool-name`), or the Momento Console.
-# When the Pool has finished creating (`momento pool get-status -n pool-name`), you can create a Valkey Database:
 resource "momento_valkey_database" "example" {
   name      = "database-name"
-  pool_name = "pool-name"
+  pool_name = momento_capacity_pool.example.name
+}
+
+resource "momento_capacity_pool" "example" {
+  name = "flex-pool-name"
+  provisioning = {
+    flex = {
+      capacity = {
+        max_gib = 25,
+        min_gib = 20
+      },
+      replication = {
+        max_replicas_per_shard = 1,
+        min_replicas_per_shard = 0
+      },
+      zones = [
+        "usw2-az1",
+        "usw2-az2"
+      ]
+    }
+  }
 }
 ```
 

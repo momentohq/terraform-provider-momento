@@ -1,4 +1,6 @@
 resource "momento_capacity_pool" "example_flex" {
+  timeouts { create = "3m" }
+
   name = "flex-pool-name"
   provisioning = {
     flex = {
@@ -19,6 +21,8 @@ resource "momento_capacity_pool" "example_flex" {
 }
 
 resource "momento_capacity_pool" "example_cluster" {
+  timeouts { create = "3m" }
+
   name = "cluster-pool-name"
   provisioning = {
     cluster = {

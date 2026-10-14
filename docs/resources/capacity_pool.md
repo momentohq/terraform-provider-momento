@@ -14,6 +14,8 @@ A Capacity Pool.
 
 ```terraform
 resource "momento_capacity_pool" "example_flex" {
+  timeouts { create = "3m" }
+
   name = "flex-pool-name"
   provisioning = {
     flex = {
@@ -34,6 +36,8 @@ resource "momento_capacity_pool" "example_flex" {
 }
 
 resource "momento_capacity_pool" "example_cluster" {
+  timeouts { create = "3m" }
+
   name = "cluster-pool-name"
   provisioning = {
     cluster = {
@@ -56,6 +60,10 @@ resource "momento_capacity_pool" "example_cluster" {
 
 - `name` (String) The name of the Capacity Pool.
 - `provisioning` (Attributes) The provisioning configuration for the Pool's capacity. The mode is fixed when the Pool is created. (see [below for nested schema](#nestedatt--provisioning))
+
+### Optional
+
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 <a id="nestedatt--provisioning"></a>
 ### Nested Schema for `provisioning`
@@ -101,3 +109,13 @@ Required:
 
 - `max_replicas_per_shard` (Number) The maximum replicas per shard.
 - `min_replicas_per_shard` (Number) The minimum replicas per shard. Set equal to the maximum to pin replication.
+
+
+
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

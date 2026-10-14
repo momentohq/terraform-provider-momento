@@ -156,6 +156,8 @@ func testAccCapacityPoolConfigFlex(name string, zones []string) string {
 	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
+  timeouts { create = "5s" }
+
   name = %[1]q
   provisioning = {
     flex = {
@@ -181,6 +183,8 @@ func testAccCapacityPoolConfigFlexIncomplete(name string, zones []string) string
 	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
+  timeouts { create = "5s" }
+
   name = %[1]q
   provisioning = {
     flex = {
@@ -201,6 +205,8 @@ func testAccCapacityPoolConfigCluster(name string, zones []string) string {
 	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
+  timeouts { create = "5s" }
+
   name = %[1]q
   provisioning = {
     cluster = {
@@ -221,10 +227,12 @@ func testAccCapacityPoolConfigClusterIncomplete(name string, zones []string) str
 	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
+  timeouts { create = "5s" }
+
   name = %[1]q
   provisioning = {
     cluster = {
-      instance_type      = "t4g.small",
+      instance_type = "t4g.small",
       zones = %[2]s
     }
   }

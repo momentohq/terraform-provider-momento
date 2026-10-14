@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -70,6 +72,7 @@ type CapacityPoolProvisioningModel struct {
 type CapacityPoolResourceModel struct {
 	Name         types.String                  `tfsdk:"name"`
 	Provisioning CapacityPoolProvisioningModel `tfsdk:"provisioning"`
+	Timeouts     timeouts.Value                `tfsdk:"timeouts"`
 }
 
 func (r *CapacityPoolResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -163,6 +166,12 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 				},
 			},
 		},
+
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+			}),
+		},
 	}
 }
 
@@ -219,6 +228,7 @@ type CapacityPoolProvisioningData struct {
 type CapacityPoolData struct {
 	Name         string                       `json:"name"`
 	Provisioning CapacityPoolProvisioningData `json:"provisioning"`
+	Status       string                       `json:"status"`
 }
 
 func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel) any {
@@ -270,6 +280,14 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	createTimeout, diags := plan.Timeouts.Create(ctx, 15*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	client := *r.httpClient
 	postUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
 
@@ -316,6 +334,13 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Poll until this pool is fully created
+	// (may need it for a database)
+	r.pollUntilPoolReady(ctx, plan.Name.ValueString(), resp)
 }
 
 func (r *CapacityPoolResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -548,4 +573,32 @@ func describeCapacityPool(ctx context.Context, client http.Client, name string, 
 		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
 	}
 	return &pool, nil
+}
+
+func (r *CapacityPoolResource) pollUntilPoolReady(ctx context.Context, poolName string, resp *resource.CreateResponse) {
+	// Poll until pool status is "active", log any errors but do not stop polling
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddWarning(
+				"Capacity Pool Creation",
+				fmt.Sprintf(
+					"Timed out waiting for Capacity Pool \"%[1]s\" to become active: %v. The Pool may still be creating."+
+						" If your other resources need this Pool, poll its status with `momento pool get-status -n \"%[1]s\"` (Momento CLI),"+
+						" then run `terraform apply` again when it's active.", poolName, ctx.Err()),
+			)
+			return
+		case <-ticker.C:
+			foundPool, err := describeCapacityPool(ctx, *r.httpClient, poolName, r.httpEndpoint, r.httpAuthToken)
+			if foundPool != nil && foundPool.Status == "active" {
+				return
+			} else if err == nil && foundPool == nil {
+				// pool not found, which could be a transient state during creation before the pool is fully registered, keep polling
+			} else if err != nil || foundPool == nil {
+				resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until Pool status is Active", err))
+			}
+		}
+	}
 }
