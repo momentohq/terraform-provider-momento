@@ -27,6 +27,7 @@ resource "momento_capacity_pool" "example_flex" {
         max_replicas_per_shard = 1,
         min_replicas_per_shard = 0
       },
+      family = "standard",
       zones = [
         "usw2-az1",
         "usw2-az2"
@@ -92,6 +93,10 @@ Required:
 - `capacity` (Attributes) The Pool's available capacity bounds, in GiB. (see [below for nested schema](#nestedatt--provisioning--flex--capacity))
 - `replication` (Attributes) The Pool's replication bounds. (see [below for nested schema](#nestedatt--provisioning--flex--replication))
 - `zones` (List of String) The availability zone IDs across which the Pool's nodes are placed. Must contain at least one zone.
+
+Optional:
+
+- `family` (String) The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it.
 
 <a id="nestedatt--provisioning--flex--capacity"></a>
 ### Nested Schema for `provisioning.flex.capacity`

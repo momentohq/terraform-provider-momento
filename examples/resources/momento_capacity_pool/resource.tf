@@ -12,6 +12,7 @@ resource "momento_capacity_pool" "example_flex" {
         max_replicas_per_shard = 1,
         min_replicas_per_shard = 0
       },
+      family = "standard",
       zones = [
         "usw2-az1",
         "usw2-az2"

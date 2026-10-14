@@ -12,10 +12,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -53,6 +57,7 @@ type ReplicationBoundsModel struct {
 type FlexProvisioningModel struct {
 	Capacity    CapacityBoundsModel    `tfsdk:"capacity"`
 	Replication ReplicationBoundsModel `tfsdk:"replication"`
+	Family      types.String           `tfsdk:"family"`
 	Zones       []types.String         `tfsdk:"zones"`
 }
 
@@ -125,6 +130,14 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 										MarkdownDescription: "The maximum replicas per shard.",
 										Required:            true,
 									},
+								},
+							},
+							"family": schema.StringAttribute{
+								MarkdownDescription: "The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it.",
+								Optional:            true,
+								Computed:            true,
+								PlanModifiers: []planmodifier.String{
+									stringplanmodifier.UseStateForUnknown(),
 								},
 							},
 							"zones": schema.ListAttribute{
@@ -210,6 +223,7 @@ type ReplicationBoundsData struct {
 type FlexProvisioningData struct {
 	Capacity    CapacityBoundsData    `json:"capacity"`
 	Replication ReplicationBoundsData `json:"replication"`
+	Family      *string               `json:"family"`
 	Zones       []string              `json:"zones"`
 }
 
@@ -231,7 +245,7 @@ type CapacityPoolData struct {
 	Status       string                       `json:"status"`
 }
 
-func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel) any {
+func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel, family any) any {
 	var rawZones []types.String
 	if provisioning.Flex != nil {
 		rawZones = provisioning.Flex.Zones
@@ -244,18 +258,22 @@ func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel) any {
 	}
 
 	if provisioning.Flex != nil {
-		return map[string]any{
-			flexApiFieldKey: map[string]any{
-				"capacity": map[string]int32{
-					"min_gib": provisioning.Flex.Capacity.MinGib.ValueInt32(),
-					"max_gib": provisioning.Flex.Capacity.MaxGib.ValueInt32(),
-				},
-				"replication": map[string]int32{
-					"min_replicas_per_shard": provisioning.Flex.Replication.MinReplicasPerShard.ValueInt32(),
-					"max_replicas_per_shard": provisioning.Flex.Replication.MaxReplicasPerShard.ValueInt32(),
-				},
-				"zones": zones,
+		flex := map[string]any{
+			"capacity": map[string]int32{
+				"min_gib": provisioning.Flex.Capacity.MinGib.ValueInt32(),
+				"max_gib": provisioning.Flex.Capacity.MaxGib.ValueInt32(),
 			},
+			"replication": map[string]int32{
+				"min_replicas_per_shard": provisioning.Flex.Replication.MinReplicasPerShard.ValueInt32(),
+				"max_replicas_per_shard": provisioning.Flex.Replication.MaxReplicasPerShard.ValueInt32(),
+			},
+			"zones": zones,
+		}
+		if family != nil {
+			flex["family"] = family
+		}
+		return map[string]any{
+			flexApiFieldKey: flex,
 		}
 	} else if provisioning.Cluster != nil {
 		return map[string]any{
@@ -291,8 +309,12 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 	client := *r.httpClient
 	postUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
 
+	var family any
+	if plan.Provisioning.Flex != nil && !plan.Provisioning.Flex.Family.IsUnknown() {
+		family = plan.Provisioning.Flex.Family.ValueString()
+	}
 	requestMap := map[string]any{
-		"provisioning": buildProvisioningRequest(plan.Provisioning),
+		"provisioning": buildProvisioningRequest(plan.Provisioning, family),
 	}
 
 	// Send request
@@ -332,8 +354,18 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	if pool.Provisioning.Flex != nil {
+		// API always resolves and returns capacity family:
+		plan.Provisioning.Flex.Family = types.StringPointerValue(pool.Provisioning.Flex.Family)
+	}
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+
+	familyConfigured, diags := familyIsConfigured(ctx, req.Config)
+	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(familyConfigured))...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -427,6 +459,7 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 		state.Provisioning.Flex.Capacity.MaxGib = types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MaxGib))
 		state.Provisioning.Flex.Replication.MinReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MinReplicasPerShard))
 		state.Provisioning.Flex.Replication.MaxReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MaxReplicasPerShard))
+		state.Provisioning.Flex.Family = types.StringPointerValue(foundPool.Provisioning.Flex.Family)
 		state.Provisioning.Flex.Zones = zones
 	} else if foundPool.Provisioning.Cluster != nil {
 		state.Provisioning.Cluster.InstanceType = types.StringValue(foundPool.Provisioning.Cluster.InstanceType)
@@ -440,6 +473,29 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 }
 
 const poolUpdateTip = "Instead, please create a new Pool, recreate your Databases and data, and destroy the old Pool when you're ready."
+
+// Private state key recording whether `family` was set in config at the *previous* apply,
+// so we know if a null `family` is new (request current default) or existing (keep pinned default).
+const privateKeyFamilyConfigured = "family_configured"
+
+var capacityFamilyPath = path.Root("provisioning").AtName("flex").AtName("family")
+
+func familyIsConfigured(ctx context.Context, config tfsdk.Config) (bool, diag.Diagnostics) {
+	var familyConfigured types.String
+	diags := config.GetAttribute(ctx, capacityFamilyPath, &familyConfigured)
+	return !familyConfigured.IsNull(), diags
+}
+
+func boolAsBytes(isSet bool) []byte {
+	if isSet {
+		return []byte("true")
+	}
+	return []byte("false")
+}
+
+func bytesAsBool(isSet []byte) bool {
+	return string(isSet) == "true"
+}
 
 func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	// Only run during updates: skip Create (state null), Delete (plan null), or unconfigured provider.
@@ -469,6 +525,25 @@ func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.Modi
 				"Capacity Pool resource does not support changing its provisioning mode, so applying this plan will fail for Pool %s. %s",
 				state.Name.ValueString(), poolUpdateTip))
 	}
+
+	if plan.Provisioning.Flex != nil && state.Provisioning.Flex != nil {
+		// If config omits Optional+Computed attribute like `family`,
+		// Terraform copies state->plan, so check config directly instead:
+		familyIsConfigured, diags := familyIsConfigured(ctx, req.Config)
+		resp.Diagnostics.Append(diags...)
+		familyWasConfiguredBytes, diags := req.Private.GetKey(ctx, privateKeyFamilyConfigured)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		familyWasConfigured := bytesAsBool(familyWasConfiguredBytes)
+
+		// When `family` is newly removed from config, API will resolve and pin the current cell default on apply.
+		if familyWasConfigured && !familyIsConfigured && !state.Provisioning.Flex.Family.IsNull() {
+			plan.Provisioning.Flex.Family = types.StringUnknown()
+			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+		}
+	}
 }
 
 func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -497,8 +572,22 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	client := *r.httpClient
 	patchUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
 
+	// The capacity pool API treats `family` differently during create vs update,
+	// but the Terraform provider accepts the same config for both and must translate updates for the API:
+	// - create: nil -> null for cell default. Otherwise, pass along "specified-family-name"
+	// - update: nil -> "cell_default". Otherwise, "specified-family-name" (even "cell_default") -> {"name": "specified-family-name"}
+	var family any
+	if plan.Provisioning.Flex != nil {
+		if plan.Provisioning.Flex.Family.IsUnknown() {
+			family = "cell_default"
+		} else {
+			family = map[string]string{
+				"name": plan.Provisioning.Flex.Family.ValueString(),
+			}
+		}
+	}
 	requestMap := map[string]any{
-		"provisioning": buildProvisioningRequest(plan.Provisioning),
+		"provisioning": buildProvisioningRequest(plan.Provisioning, family),
 	}
 
 	requestJson, err := json.Marshal(requestMap)
@@ -536,8 +625,16 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
+	if pool.Provisioning.Flex != nil {
+		plan.Provisioning.Flex.Family = types.StringPointerValue(pool.Provisioning.Flex.Family)
+	}
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+
+	familyConfigured, diags := familyIsConfigured(ctx, req.Config)
+	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(familyConfigured))...)
 }
 
 func describeCapacityPool(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*CapacityPoolData, error) {
