@@ -139,6 +139,7 @@ Optional:
 
 - `cloud_watch` (Attributes) Deliver this Pool's metrics to your CloudWatch account. (see [below for nested schema](#nestedatt--metrics_config--cloud_watch))
 - `disabled` (Boolean) Disable delivery of this Pool's metrics to your CloudWatch account.
+- `inherit` (Boolean) Remove this Pool's specific metrics config and inherit your account-wide default.
 
 <a id="nestedatt--metrics_config--cloud_watch"></a>
 ### Nested Schema for `metrics_config.cloud_watch`

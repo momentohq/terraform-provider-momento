@@ -52,7 +52,10 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName1),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones1))),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.cluster.%"),
-					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "true"),
 				),
 			},
 			// Renaming a pool should be rejected
@@ -86,7 +89,10 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName2),                // changed
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones2))), // changed
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.cluster.%"),
-					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "true"),
 				),
 			},
 			// Removing a pool's family configuration should resolve it to the cell default:
@@ -204,7 +210,10 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.zones.#", strconv.Itoa(len(zones1))),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.%"),
-					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "true"),
 				),
 			},
 			// Switching a pool's provisioning *mode* should be rejected
@@ -232,7 +241,10 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.zones.#", strconv.Itoa(len(zones2))), // changed
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.%"),
-					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "true"),
 				),
 			},
 		},
@@ -266,7 +278,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Create a pool with metrics disabled
 			{
-				Config: testAccCapacityPoolConfigWithMetricsDisabled(poolName4, zones1),
+				Config: testAccCapacityPoolConfigWithMetricsBool(poolName4, zones1, "disabled"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
@@ -276,6 +288,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "true"),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "false"),
 				),
 			},
 			// Enable metrics
@@ -319,12 +332,30 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "true"),
+				),
+			},
+			// Specifically specify inheriting metrics
+			{
+				Config: testAccCapacityPoolConfigWithMetricsBool(poolName4, zones1, "inherit"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "NoOp"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "true"),
 				),
 			},
 			// Disable metrics
 			{
-				Config: testAccCapacityPoolConfigWithMetricsDisabled(poolName4, zones1),
+				Config: testAccCapacityPoolConfigWithMetricsBool(poolName4, zones1, "disabled"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -334,6 +365,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "true"),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.inherit", "false"),
 				),
 			},
 		},
@@ -475,7 +507,7 @@ resource "momento_capacity_pool" "test" {
 `, name, zonesAsString(zones), metricsIamRole, regionString)
 }
 
-func testAccCapacityPoolConfigWithMetricsDisabled(name string, zones []string) string {
+func testAccCapacityPoolConfigWithMetricsBool(name string, zones []string, boolFieldName string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
   timeouts { create = "5s" }
@@ -490,8 +522,8 @@ resource "momento_capacity_pool" "test" {
     }
   }
   metrics_config = {
-    disabled = true
+    %[3]s = true
   }
 }
-`, name, zonesAsString(zones))
+`, name, zonesAsString(zones), boolFieldName)
 }

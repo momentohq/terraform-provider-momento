@@ -61,6 +61,7 @@ func (r *ValkeyDatabaseResource) Schema(ctx context.Context, req resource.Schema
 			"metrics_config": schema.SingleNestedAttribute{
 				MarkdownDescription: "Optional configuration for exporting CloudWatch metrics. When omitted, the Database inherits its Pool's metrics config.",
 				Optional:            true,
+				Computed:            true,
 				Attributes: map[string]schema.Attribute{
 					"disabled": schema.BoolAttribute{
 						Description: "Disable delivery of this Database's metrics to your CloudWatch account.",
@@ -70,6 +71,7 @@ func (r *ValkeyDatabaseResource) Schema(ctx context.Context, req resource.Schema
 							boolvalidator.Equals(true),
 							boolvalidator.ExactlyOneOf(
 								path.MatchRelative().AtParent().AtName("cloud_watch"),
+								path.MatchRelative().AtParent().AtName("inherit"),
 							),
 						},
 					},
@@ -85,6 +87,14 @@ func (r *ValkeyDatabaseResource) Schema(ctx context.Context, req resource.Schema
 								MarkdownDescription: "The AWS region where the metrics will be exported to. When omitted, defaults to the region this Database runs in.",
 								Optional:            true,
 							},
+						},
+					},
+					"inherit": schema.BoolAttribute{
+						Description: "Remove this Database's specific metrics config and inherit its Pool's default.",
+						Optional:    true,
+						Computed:    true,
+						Validators: []validator.Bool{
+							boolvalidator.Equals(true),
 						},
 					},
 				},
@@ -116,9 +126,9 @@ func (r *ValkeyDatabaseResource) Configure(ctx context.Context, req resource.Con
 }
 
 type ValkeyDatabaseData struct {
-	Name          string                     `json:"name"`
-	PoolName      string                     `json:"pool_name"`
-	MetricsConfig *CustomerMetricsConfigData `json:"metrics_config"`
+	Name          string                    `json:"name"`
+	PoolName      string                    `json:"pool_name"`
+	MetricsConfig CustomerMetricsConfigData `json:"metrics_config"`
 }
 
 func (r *ValkeyDatabaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -246,9 +256,7 @@ func (r *ValkeyDatabaseResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
-	if foundDatabase.MetricsConfig != nil && !foundDatabase.MetricsConfig.Inherit {
-		state.MetricsConfig = readMetricsConfigResponse(foundDatabase.MetricsConfig)
-	}
+	state.MetricsConfig = readMetricsConfigResponse(foundDatabase.MetricsConfig)
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -257,13 +265,28 @@ func (r *ValkeyDatabaseResource) Read(ctx context.Context, req resource.ReadRequ
 const databaseUpdateTip = "Instead, please create a new Database, move your resources, and destroy the old Database when you're ready."
 
 func (r *ValkeyDatabaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Only run during updates: skip Create (state null), Delete (plan null), or unconfigured provider.
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() || r.httpClient == nil {
+	// Skip Delete or unconfigured provider.
+	if req.Plan.Raw.IsNull() || r.httpClient == nil {
 		return
 	}
 
-	var plan, state ValkeyDatabaseResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(completeMetricsConfig(ctx, req.Config, &resp.Plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var plan ValkeyDatabaseResourceModel
+	resp.Diagnostics.Append(resp.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Skip Create.
+	if req.State.Raw.IsNull() {
+		return
+	}
+
+	var state ValkeyDatabaseResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -275,21 +298,14 @@ func (r *ValkeyDatabaseResource) ModifyPlan(ctx context.Context, req resource.Mo
 			fmt.Sprintf(
 				"Valkey Database resource does not support renaming, so applying this plan will fail for Database %s. %s",
 				state.Name.ValueString(), databaseUpdateTip))
-		return
-	} else if !plan.PoolName.Equal(state.PoolName) {
+	}
+	if !plan.PoolName.Equal(state.PoolName) {
 		resp.Diagnostics.AddWarning(
 			"Valkey Database Cannot Be Moved",
 			fmt.Sprintf(
 				"Valkey Database resource does not support moving to a different Pool, so applying this plan will fail for Database %s. %s",
 				state.Name.ValueString(), databaseUpdateTip))
-		return
 	}
-
-	if plan.MetricsConfig != nil && plan.MetricsConfig.CloudWatch != nil {
-		plan.MetricsConfig.Disabled = types.BoolValue(false)
-	}
-
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *ValkeyDatabaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {

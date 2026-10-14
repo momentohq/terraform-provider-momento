@@ -39,7 +39,10 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_valkey_database.test", "name", databaseName1),
 					resource.TestCheckResourceAttr("momento_valkey_database.test", "pool_name", poolName1),
-					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_valkey_database.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.inherit", "true"),
 				),
 			},
 			// Renaming a database should be rejected
@@ -86,7 +89,7 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 			},
 			// Disable metrics
 			{
-				Config: testAccValkeyDatabaseConfigWithMetricsDisabled(databaseName1, poolName1, allPoolNames),
+				Config: testAccValkeyDatabaseConfigWithMetricsBool(databaseName1, poolName1, allPoolNames, "disabled"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_valkey_database.test", "Update"),
@@ -96,18 +99,37 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 					resource.TestCheckResourceAttrSet("momento_valkey_database.test", "metrics_config.%"),
 					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.disabled", "true"),
 					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.inherit", "false"),
 				),
 			},
 			// Back to inheriting metrics
 			{
-				Config: testAccValkeyDatabaseConfig(databaseName1, poolName1, allPoolNames),
+				Config: testAccValkeyDatabaseConfigWithMetricsBool(databaseName1, poolName1, allPoolNames, "inherit"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_valkey_database.test", "Update"),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.%"),
+					resource.TestCheckResourceAttrSet("momento_valkey_database.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.inherit", "true"),
+				),
+			},
+			// Imply inheriting metrics
+			{
+				Config: testAccValkeyDatabaseConfig(databaseName1, poolName1, allPoolNames),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_valkey_database.test", "NoOp"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("momento_valkey_database.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.disabled", "false"),
+					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.cloud_watch.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.inherit", "true"),
 				),
 			},
 			// Destroying should still work with a renamed database
@@ -193,16 +215,16 @@ resource "momento_valkey_database" "test" {
 `, databaseName, resourceName(poolNameForDatabase), poolsAsString(poolNames), metricsIamRole, regionString)
 }
 
-func testAccValkeyDatabaseConfigWithMetricsDisabled(databaseName string, poolNameForDatabase string, poolNames []string) string {
+func testAccValkeyDatabaseConfigWithMetricsBool(databaseName string, poolNameForDatabase string, poolNames []string, boolFieldName string) string {
 	return fmt.Sprintf(`
 resource "momento_valkey_database" "test" {
   name = %[1]q
   pool_name = momento_capacity_pool.%[2]s.name
   metrics_config = {
-    disabled = true
+    %[4]s = true
   }
 }
 
 %[3]s
-`, databaseName, resourceName(poolNameForDatabase), poolsAsString(poolNames))
+`, databaseName, resourceName(poolNameForDatabase), poolsAsString(poolNames), boolFieldName)
 }

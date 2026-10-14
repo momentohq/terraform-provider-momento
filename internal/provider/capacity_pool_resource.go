@@ -82,6 +82,7 @@ type CloudWatchMetricsConfigModel struct {
 type CustomerMetricsConfigModel struct {
 	Disabled   types.Bool                    `tfsdk:"disabled"`
 	CloudWatch *CloudWatchMetricsConfigModel `tfsdk:"cloud_watch"`
+	Inherit    types.Bool                    `tfsdk:"inherit"`
 }
 
 // CapacityPoolResourceModel describes the resource data model.
@@ -193,6 +194,7 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 			"metrics_config": schema.SingleNestedAttribute{
 				MarkdownDescription: "Optional configuration for exporting CloudWatch metrics. When omitted, the Pool inherits your account-wide metrics config.",
 				Optional:            true,
+				Computed:            true,
 				Attributes: map[string]schema.Attribute{
 					"disabled": schema.BoolAttribute{
 						Description: "Disable delivery of this Pool's metrics to your CloudWatch account.",
@@ -202,6 +204,7 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 							boolvalidator.Equals(true),
 							boolvalidator.ExactlyOneOf(
 								path.MatchRelative().AtParent().AtName("cloud_watch"),
+								path.MatchRelative().AtParent().AtName("inherit"),
 							),
 						},
 					},
@@ -217,6 +220,14 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 								MarkdownDescription: "The AWS region where the metrics will be exported to. When omitted, defaults to the region this Pool runs in.",
 								Optional:            true,
 							},
+						},
+					},
+					"inherit": schema.BoolAttribute{
+						Description: "Remove this Pool's specific metrics config and inherit your account-wide default.",
+						Optional:    true,
+						Computed:    true,
+						Validators: []validator.Bool{
+							boolvalidator.Equals(true),
 						},
 					},
 				},
@@ -297,7 +308,7 @@ type CustomerMetricsConfigData struct {
 func (c *CustomerMetricsConfigData) UnmarshalJSON(b []byte) error {
 	*c = CustomerMetricsConfigData{}
 	if string(b) == "null" {
-		return nil
+		return fmt.Errorf("metrics_config unexpectedly null")
 	}
 
 	var s string
@@ -328,7 +339,7 @@ func (c *CustomerMetricsConfigData) UnmarshalJSON(b []byte) error {
 type CapacityPoolData struct {
 	Name          string                       `json:"name"`
 	Provisioning  CapacityPoolProvisioningData `json:"provisioning"`
-	MetricsConfig *CustomerMetricsConfigData   `json:"metrics_config"`
+	MetricsConfig CustomerMetricsConfigData    `json:"metrics_config"`
 	Status        string                       `json:"status"`
 }
 
@@ -376,9 +387,7 @@ func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel, family
 }
 
 func buildMetricsConfigRequest(metricsConfig *CustomerMetricsConfigModel) any {
-	if metricsConfig == nil {
-		return "inherit"
-	} else if metricsConfig.CloudWatch != nil {
+	if metricsConfig.CloudWatch != nil {
 		cloud_watch := map[string]string{
 			"customer_iam_role": metricsConfig.CloudWatch.CustomerIamRole.ValueString(),
 		}
@@ -390,13 +399,16 @@ func buildMetricsConfigRequest(metricsConfig *CustomerMetricsConfigModel) any {
 		}
 	} else if metricsConfig.Disabled.ValueBool() {
 		return "disabled"
+	} else if metricsConfig.Inherit.ValueBool() {
+		return "inherit"
 	}
 	return nil
 }
 
-func readMetricsConfigResponse(metricsConfigData *CustomerMetricsConfigData) *CustomerMetricsConfigModel {
+func readMetricsConfigResponse(metricsConfigData CustomerMetricsConfigData) *CustomerMetricsConfigModel {
 	metricsConfig := &CustomerMetricsConfigModel{
 		Disabled: types.BoolValue(metricsConfigData.Disabled),
+		Inherit:  types.BoolValue(metricsConfigData.Inherit),
 	}
 	if metricsConfigData.CloudWatch != nil {
 		metricsConfig.CloudWatch = &CloudWatchMetricsConfigModel{
@@ -588,9 +600,7 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 		state.Provisioning.Cluster.Zones = zones
 	}
 
-	if foundPool.MetricsConfig != nil && !foundPool.MetricsConfig.Inherit {
-		state.MetricsConfig = readMetricsConfigResponse(foundPool.MetricsConfig)
-	}
+	state.MetricsConfig = readMetricsConfigResponse(foundPool.MetricsConfig)
 
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -621,14 +631,63 @@ func bytesAsBool(isSet []byte) bool {
 	return string(isSet) == "true"
 }
 
+// completeMetricsConfig sets missing values in the plan's metrics_config,
+// in order to more clearly show changes.
+func completeMetricsConfig(ctx context.Context, config tfsdk.Config, plan *tfsdk.Plan) diag.Diagnostics {
+	// If config entirely omits Optional+Computed attribute like `metrics_config`,
+	// Terraform copies state->plan, so check config directly first:
+	var rawMetricsConfig types.Object
+	diags := config.GetAttribute(ctx, path.Root("metrics_config"), &rawMetricsConfig)
+	if diags.HasError() {
+		return diags
+	}
+	var metricsConfig CustomerMetricsConfigModel
+	if rawMetricsConfig.IsNull() {
+		metricsConfig = CustomerMetricsConfigModel{
+			Disabled: types.BoolValue(false),
+			Inherit:  types.BoolValue(true),
+		}
+	} else {
+		// Now check plan:
+		diags := plan.GetAttribute(ctx, path.Root("metrics_config"), &metricsConfig)
+		if diags.HasError() {
+			return diags
+		}
+		attrs := rawMetricsConfig.Attributes()
+		if attrs["disabled"].IsNull() {
+			metricsConfig.Disabled = types.BoolValue(false)
+		}
+		if attrs["inherit"].IsNull() {
+			metricsConfig.Inherit = types.BoolValue(false)
+		}
+	}
+	diags.Append(plan.SetAttribute(ctx, path.Root("metrics_config"), metricsConfig)...)
+	return diags
+}
+
 func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Only run during updates: skip Create (state null), Delete (plan null), or unconfigured provider.
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() || r.httpClient == nil {
+	// Skip Delete or unconfigured provider.
+	if req.Plan.Raw.IsNull() || r.httpClient == nil {
 		return
 	}
 
-	var plan, state CapacityPoolResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(completeMetricsConfig(ctx, req.Config, &resp.Plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var plan CapacityPoolResourceModel
+	resp.Diagnostics.Append(resp.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Skip Create.
+	if req.State.Raw.IsNull() {
+		return
+	}
+
+	var state CapacityPoolResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -665,14 +724,9 @@ func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.Modi
 		// When `family` is newly removed from config, API will resolve and pin the current cell default on apply.
 		if familyWasConfigured && !familyIsConfigured && !state.Provisioning.Flex.Family.IsNull() {
 			plan.Provisioning.Flex.Family = types.StringUnknown()
+			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 		}
 	}
-
-	if plan.MetricsConfig != nil && plan.MetricsConfig.CloudWatch != nil {
-		plan.MetricsConfig.Disabled = types.BoolValue(false)
-	}
-
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
