@@ -8,7 +8,9 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestCreateValkeyDatabaseResource(t *testing.T) {
@@ -17,6 +19,9 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 	poolName1 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	poolName2 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	allPoolNames := []string{poolName1, poolName2}
+
+	iamRole := "arn:aws:iam::123456789012:role/MomentoMetricsRole"
+	region := "us-east-1"
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -34,19 +39,78 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_valkey_database.test", "name", databaseName1),
 					resource.TestCheckResourceAttr("momento_valkey_database.test", "pool_name", poolName1),
+					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.%"),
 				),
 			},
-			// Renaming a database should not be allowed
+			// Renaming a database should be rejected
 			{
 				Config:      testAccValkeyDatabaseConfig(databaseName2, poolName1, allPoolNames),
-				ExpectError: regexp.MustCompile("Database Cannot Be Updated"),
+				ExpectError: regexp.MustCompile("Database Cannot Be Renamed"),
 			},
-			// Moving a database should not be allowed, even to an existing pool
+			// Moving a database should be rejected, even to an existing pool
 			{
 				Config:      testAccValkeyDatabaseConfig(databaseName1, poolName2, allPoolNames),
-				ExpectError: regexp.MustCompile("Database Cannot Be Updated"),
+				ExpectError: regexp.MustCompile("Database Cannot Be Moved"),
 			},
-			// Destroying should still work with a changed config
+			// Enabling metrics should be allowed
+			{
+				Config: testAccValkeyDatabaseConfigWithMetrics(databaseName1, poolName1, allPoolNames, iamRole, &region),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_valkey_database.test", "Update"),
+						plancheck.ExpectKnownValue("momento_valkey_database.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("iam_role_arn"),
+							knownvalue.StringExact(iamRole)),
+						plancheck.ExpectKnownValue("momento_valkey_database.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("region"),
+							knownvalue.StringExact(region)),
+					},
+				},
+				ExpectError: regexp.MustCompile(fmt.Sprintf(`'metrics_config': Failed to assume the provided IAM role[\s]+'%s'`, iamRole)),
+			},
+			// Default region
+			{
+				Config: testAccValkeyDatabaseConfigWithMetrics(databaseName1, poolName1, allPoolNames, iamRole, nil),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_valkey_database.test", "Update"),
+						plancheck.ExpectKnownValue("momento_valkey_database.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("iam_role_arn"),
+							knownvalue.StringExact(iamRole)),
+						plancheck.ExpectKnownValue("momento_valkey_database.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("region"),
+							knownvalue.Null()),
+					},
+				},
+				ExpectError: regexp.MustCompile(fmt.Sprintf(`'metrics_config': Failed to assume the provided IAM role[\s]+'%s'`, iamRole)),
+			},
+			// Disable metrics
+			{
+				Config: testAccValkeyDatabaseConfigWithMetricsDisabled(databaseName1, poolName1, allPoolNames),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_valkey_database.test", "Update"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("momento_valkey_database.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.disabled", "true"),
+					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.cloud_watch.%"),
+				),
+			},
+			// Back to inheriting metrics
+			{
+				Config: testAccValkeyDatabaseConfig(databaseName1, poolName1, allPoolNames),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_valkey_database.test", "Update"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_valkey_database.test", "metrics_config.%"),
+				),
+			},
+			// Destroying should still work with a renamed database
 			{
 				Config:  testAccValkeyDatabaseConfig(databaseName2, poolName1, allPoolNames),
 				Destroy: true,
@@ -56,16 +120,19 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 					},
 				},
 			},
-			// Delete testing automatically occurs in TestCase
 		},
 	})
 }
 
-func testAccValkeyDatabaseConfig(databaseName string, poolNameForDatabase string, poolNames []string) string {
+func resourceName(name string) string {
+	return "test_" + strings.ReplaceAll(name, "-", "_")
+}
+
+func poolsAsString(poolNames []string) string {
 	var pools strings.Builder
 	for _, poolName := range poolNames {
 		fmt.Fprintf(&pools, `
-resource "momento_capacity_pool" "test_%[2]s" {
+resource "momento_capacity_pool" "%[2]s" {
   timeouts { create = "3m" }
 
   name = %[1]q
@@ -86,14 +153,56 @@ resource "momento_capacity_pool" "test_%[2]s" {
     }
   }
 }
-`, poolName, strings.ReplaceAll(poolName, "-", "_"))
+`, poolName, resourceName(poolName))
+	}
+	return pools.String()
+}
+
+func testAccValkeyDatabaseConfig(databaseName string, poolNameForDatabase string, poolNames []string) string {
+	return fmt.Sprintf(`
+resource "momento_valkey_database" "test" {
+  name = %[1]q
+  pool_name = momento_capacity_pool.%[2]s.name
+}
+
+%[3]s
+`, databaseName, resourceName(poolNameForDatabase), poolsAsString(poolNames))
+}
+
+func testAccValkeyDatabaseConfigWithMetrics(
+	databaseName string, poolNameForDatabase string, poolNames []string,
+	metricsIamRole string, region *string,
+) string {
+	var regionString string
+	if region != nil {
+		regionString = fmt.Sprintf(`region = %q`, *region)
 	}
 	return fmt.Sprintf(`
 resource "momento_valkey_database" "test" {
   name = %[1]q
-  pool_name = momento_capacity_pool.test_%[2]s.name
+  pool_name = momento_capacity_pool.%[2]s.name
+  metrics_config = {
+    cloud_watch = {
+      iam_role_arn = %[4]q
+      %[5]s
+    }
+  }
 }
 
 %[3]s
-`, databaseName, strings.ReplaceAll(poolNameForDatabase, "-", "_"), pools.String())
+`, databaseName, resourceName(poolNameForDatabase), poolsAsString(poolNames), metricsIamRole, regionString)
+}
+
+func testAccValkeyDatabaseConfigWithMetricsDisabled(databaseName string, poolNameForDatabase string, poolNames []string) string {
+	return fmt.Sprintf(`
+resource "momento_valkey_database" "test" {
+  name = %[1]q
+  pool_name = momento_capacity_pool.%[2]s.name
+  metrics_config = {
+    disabled = true
+  }
+}
+
+%[3]s
+`, databaseName, resourceName(poolNameForDatabase), poolsAsString(poolNames))
 }

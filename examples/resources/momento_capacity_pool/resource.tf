@@ -19,6 +19,12 @@ resource "momento_capacity_pool" "example_flex" {
       ]
     }
   }
+  metrics_config = {
+    cloud_watch = {
+      iam_role_arn = local.metrics_iam_role
+      region       = "us-east-1"
+    }
+  }
 }
 
 resource "momento_capacity_pool" "example_cluster" {
@@ -36,4 +42,11 @@ resource "momento_capacity_pool" "example_cluster" {
       ]
     }
   }
+  metrics_config = {
+    disabled = true
+  }
+}
+
+locals {
+  metrics_iam_role = "arn:aws:iam::123456789012:role/MomentoMetricsRole"
 }

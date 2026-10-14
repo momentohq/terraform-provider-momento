@@ -18,6 +18,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 	poolName1 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	poolName2 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	poolName3 := "terraform-provider-momento-test-" + acctest.RandString(8)
+	poolName4 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	familyName1 := "standard"
 	familyName2 := "performance"
 	familyCellDefault := "standard"
@@ -51,6 +52,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName1),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones1))),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.cluster.%"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
 				),
 			},
 			// Renaming a pool should be rejected
@@ -84,6 +86,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName2),                // changed
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones2))), // changed
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.cluster.%"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
 				),
 			},
 			// Removing a pool's family configuration should resolve it to the cell default:
@@ -201,6 +204,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.zones.#", strconv.Itoa(len(zones1))),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.%"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
 				),
 			},
 			// Switching a pool's provisioning *mode* should be rejected
@@ -228,17 +232,123 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.zones.#", strconv.Itoa(len(zones2))), // changed
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.%"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+				),
+			},
+		},
+	})
+
+	iamRole1 := "arn:aws:iam::123456789012:role/MomentoMetricsRole-1"
+	iamRole2 := "arn:aws:iam::123456789012:role/MomentoMetricsRole-2"
+	region := "us-east-1"
+
+	// Metrics config:
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create a pool with metrics
+			{
+				Config: testAccCapacityPoolConfigWithMetrics(poolName4, zones1, iamRole1, &region),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("iam_role_arn"),
+							knownvalue.StringExact(iamRole1)),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("region"),
+							knownvalue.StringExact(region)),
+					},
+				},
+				// The API will reject this nonexistent IAM role, but we can check it was sent+received:
+				ExpectError: regexp.MustCompile(fmt.Sprintf(`'metrics_config': Failed to assume the provided IAM role[\s]+'%s'`, iamRole1)),
+			},
+			// Create a pool with metrics disabled
+			{
+				Config: testAccCapacityPoolConfigWithMetricsDisabled(poolName4, zones1),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "true"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
+				),
+			},
+			// Enable metrics
+			{
+				Config: testAccCapacityPoolConfigWithMetrics(poolName4, zones1, iamRole2, &region),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("iam_role_arn"),
+							knownvalue.StringExact(iamRole2)),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("region"),
+							knownvalue.StringExact(region)),
+					},
+				},
+				ExpectError: regexp.MustCompile(fmt.Sprintf(`'metrics_config': Failed to assume the provided IAM role[\s]+'%s'`, iamRole2)),
+			},
+			// Default region
+			{
+				Config: testAccCapacityPoolConfigWithMetrics(poolName4, zones1, iamRole2, nil),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("iam_role_arn"),
+							knownvalue.StringExact(iamRole2)),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("metrics_config").AtMapKey("cloud_watch").AtMapKey("region"),
+							knownvalue.Null()),
+					},
+				},
+				ExpectError: regexp.MustCompile(fmt.Sprintf(`'metrics_config': Failed to assume the provided IAM role[\s]+'%s'`, iamRole2)),
+			},
+			// Inherit metrics
+			{
+				Config: testAccCapacityPoolConfigCluster(poolName4, zones1),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.%"),
+				),
+			},
+			// Disable metrics
+			{
+				Config: testAccCapacityPoolConfigWithMetricsDisabled(poolName4, zones1),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "metrics_config.disabled", "true"),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "metrics_config.cloud_watch.%"),
 				),
 			},
 		},
 	})
 }
 
-func testAccCapacityPoolConfigFlex(name string, family string, zones []string) string {
+func zonesAsString(zones []string) string {
 	zonesString := "[]"
 	if len(zones) > 0 {
 		zonesString = fmt.Sprintf(`["%s"]`, strings.Join(zones, `", "`))
 	}
+	return zonesString
+}
+
+func testAccCapacityPoolConfigFlex(name string, family string, zones []string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
   timeouts { create = "5s" }
@@ -259,14 +369,10 @@ resource "momento_capacity_pool" "test" {
     }
   }
 }
-`, name, zonesString, family)
+`, name, zonesAsString(zones), family)
 }
 
 func testAccCapacityPoolConfigFlexWithoutFamily(name string, zones []string) string {
-	zonesString := "[]"
-	if len(zones) > 0 {
-		zonesString = fmt.Sprintf(`["%s"]`, strings.Join(zones, `", "`))
-	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
   timeouts { create = "5s" }
@@ -286,14 +392,10 @@ resource "momento_capacity_pool" "test" {
     }
   }
 }
-`, name, zonesString)
+`, name, zonesAsString(zones))
 }
 
 func testAccCapacityPoolConfigFlexIncomplete(name string, zones []string) string {
-	zonesString := "[]"
-	if len(zones) > 0 {
-		zonesString = fmt.Sprintf(`["%s"]`, strings.Join(zones, `", "`))
-	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
   timeouts { create = "5s" }
@@ -308,14 +410,10 @@ resource "momento_capacity_pool" "test" {
     }
   }
 }
-`, name, zonesString)
+`, name, zonesAsString(zones))
 }
 
 func testAccCapacityPoolConfigCluster(name string, zones []string) string {
-	zonesString := "[]"
-	if len(zones) > 0 {
-		zonesString = fmt.Sprintf(`["%s"]`, strings.Join(zones, `", "`))
-	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
   timeouts { create = "5s" }
@@ -330,14 +428,10 @@ resource "momento_capacity_pool" "test" {
     }
   }
 }
-`, name, zonesString)
+`, name, zonesAsString(zones))
 }
 
 func testAccCapacityPoolConfigClusterIncomplete(name string, zones []string) string {
-	zonesString := "[]"
-	if len(zones) > 0 {
-		zonesString = fmt.Sprintf(`["%s"]`, strings.Join(zones, `", "`))
-	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
   timeouts { create = "5s" }
@@ -350,5 +444,54 @@ resource "momento_capacity_pool" "test" {
     }
   }
 }
-`, name, zonesString)
+`, name, zonesAsString(zones))
+}
+
+func testAccCapacityPoolConfigWithMetrics(name string, zones []string, metricsIamRole string, region *string) string {
+	var regionString string
+	if region != nil {
+		regionString = fmt.Sprintf(`region = %q`, *region)
+	}
+	return fmt.Sprintf(`
+resource "momento_capacity_pool" "test" {
+  timeouts { create = "5s" }
+
+  name = %[1]q
+  provisioning = {
+    cluster = {
+      instance_type      = "t4g.small",
+      shard_count        = 1,
+      replicas_per_shard = 0,
+      zones = %[2]s
+    }
+  }
+  metrics_config = {
+    cloud_watch = {
+      iam_role_arn = %[3]q
+      %[4]s
+    }
+  }
+}
+`, name, zonesAsString(zones), metricsIamRole, regionString)
+}
+
+func testAccCapacityPoolConfigWithMetricsDisabled(name string, zones []string) string {
+	return fmt.Sprintf(`
+resource "momento_capacity_pool" "test" {
+  timeouts { create = "5s" }
+
+  name = %[1]q
+  provisioning = {
+    cluster = {
+      instance_type      = "t4g.small",
+      shard_count        = 1,
+      replicas_per_shard = 0,
+      zones = %[2]s
+    }
+  }
+  metrics_config = {
+    disabled = true
+  }
+}
+`, name, zonesAsString(zones))
 }

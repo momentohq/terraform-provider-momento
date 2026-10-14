@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -73,11 +74,22 @@ type CapacityPoolProvisioningModel struct {
 	Cluster *ClusterProvisioningModel `tfsdk:"cluster"`
 }
 
+type CloudWatchMetricsConfigModel struct {
+	CustomerIamRole types.String `tfsdk:"iam_role_arn"` // "iam_role_arn" to match object store Terraform
+	Region          types.String `tfsdk:"region"`
+}
+
+type CustomerMetricsConfigModel struct {
+	Disabled   types.Bool                    `tfsdk:"disabled"`
+	CloudWatch *CloudWatchMetricsConfigModel `tfsdk:"cloud_watch"`
+}
+
 // CapacityPoolResourceModel describes the resource data model.
 type CapacityPoolResourceModel struct {
-	Name         types.String                  `tfsdk:"name"`
-	Provisioning CapacityPoolProvisioningModel `tfsdk:"provisioning"`
-	Timeouts     timeouts.Value                `tfsdk:"timeouts"`
+	Name          types.String                  `tfsdk:"name"`
+	Provisioning  CapacityPoolProvisioningModel `tfsdk:"provisioning"`
+	Timeouts      timeouts.Value                `tfsdk:"timeouts"`
+	MetricsConfig *CustomerMetricsConfigModel   `tfsdk:"metrics_config"`
 }
 
 func (r *CapacityPoolResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -178,6 +190,37 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 					},
 				},
 			},
+			"metrics_config": schema.SingleNestedAttribute{
+				MarkdownDescription: "Optional configuration for exporting CloudWatch metrics. When omitted, the Pool inherits your account-wide metrics config.",
+				Optional:            true,
+				Attributes: map[string]schema.Attribute{
+					"disabled": schema.BoolAttribute{
+						Description: "Disable delivery of this Pool's metrics to your CloudWatch account.",
+						Optional:    true,
+						Computed:    true,
+						Validators: []validator.Bool{
+							boolvalidator.Equals(true),
+							boolvalidator.ExactlyOneOf(
+								path.MatchRelative().AtParent().AtName("cloud_watch"),
+							),
+						},
+					},
+					"cloud_watch": schema.SingleNestedAttribute{
+						Description: "Deliver this Pool's metrics to your CloudWatch account.",
+						Optional:    true,
+						Attributes: map[string]schema.Attribute{
+							"iam_role_arn": schema.StringAttribute{
+								MarkdownDescription: "The ARN of the IAM role that Momento will assume to export metrics.",
+								Required:            true,
+							},
+							"region": schema.StringAttribute{
+								MarkdownDescription: "The AWS region where the metrics will be exported to. When omitted, defaults to the region this Pool runs in.",
+								Optional:            true,
+							},
+						},
+					},
+				},
+			},
 		},
 
 		Blocks: map[string]schema.Block{
@@ -239,10 +282,54 @@ type CapacityPoolProvisioningData struct {
 	Cluster *ClusterProvisioningData `json:"explicit"` // Must match clusterApiFieldKey
 }
 
+type CloudWatchMetricsConfigData struct {
+	CustomerIamRole string  `json:"customer_iam_role"`
+	Region          *string `json:"region"`
+}
+
+type CustomerMetricsConfigData struct {
+	Disabled   bool                         `json:"disabled"`
+	CloudWatch *CloudWatchMetricsConfigData `json:"cloud_watch"`
+	Inherit    bool                         `json:"inherit"`
+}
+
+// UnmarshalJSON accepts the API's metrics config, which may be a string OR an object.
+func (c *CustomerMetricsConfigData) UnmarshalJSON(b []byte) error {
+	*c = CustomerMetricsConfigData{}
+	if string(b) == "null" {
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		t := true
+		switch s {
+		case "disabled":
+			c.Disabled = t
+		case "inherit":
+			c.Inherit = t
+		default:
+			return fmt.Errorf("unrecognized metrics_config value %q", s)
+		}
+		return nil
+	}
+
+	// Decode into a separate struct, since decoding into CustomerMetricsConfigData would recurse.
+	var obj struct {
+		CloudWatch *CloudWatchMetricsConfigData `json:"cloud_watch"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return fmt.Errorf("unable to unmarshal metrics_config: %w", err)
+	}
+	c.CloudWatch = obj.CloudWatch
+	return nil
+}
+
 type CapacityPoolData struct {
-	Name         string                       `json:"name"`
-	Provisioning CapacityPoolProvisioningData `json:"provisioning"`
-	Status       string                       `json:"status"`
+	Name          string                       `json:"name"`
+	Provisioning  CapacityPoolProvisioningData `json:"provisioning"`
+	MetricsConfig *CustomerMetricsConfigData   `json:"metrics_config"`
+	Status        string                       `json:"status"`
 }
 
 func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel, family any) any {
@@ -288,6 +375,38 @@ func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel, family
 	return nil
 }
 
+func buildMetricsConfigRequest(metricsConfig *CustomerMetricsConfigModel) any {
+	if metricsConfig == nil {
+		return "inherit"
+	} else if metricsConfig.CloudWatch != nil {
+		cloud_watch := map[string]string{
+			"customer_iam_role": metricsConfig.CloudWatch.CustomerIamRole.ValueString(),
+		}
+		if !metricsConfig.CloudWatch.Region.IsNull() {
+			cloud_watch["region"] = metricsConfig.CloudWatch.Region.ValueString()
+		}
+		return map[string]any{
+			"cloud_watch": cloud_watch,
+		}
+	} else if metricsConfig.Disabled.ValueBool() {
+		return "disabled"
+	}
+	return nil
+}
+
+func readMetricsConfigResponse(metricsConfigData *CustomerMetricsConfigData) *CustomerMetricsConfigModel {
+	metricsConfig := &CustomerMetricsConfigModel{
+		Disabled: types.BoolValue(metricsConfigData.Disabled),
+	}
+	if metricsConfigData.CloudWatch != nil {
+		metricsConfig.CloudWatch = &CloudWatchMetricsConfigModel{
+			CustomerIamRole: types.StringValue(metricsConfigData.CloudWatch.CustomerIamRole),
+			Region:          types.StringPointerValue(metricsConfigData.CloudWatch.Region),
+		}
+	}
+	return metricsConfig
+}
+
 func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan CapacityPoolResourceModel
 
@@ -314,7 +433,8 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 		family = plan.Provisioning.Flex.Family.ValueString()
 	}
 	requestMap := map[string]any{
-		"provisioning": buildProvisioningRequest(plan.Provisioning, family),
+		"provisioning":   buildProvisioningRequest(plan.Provisioning, family),
+		"metrics_config": buildMetricsConfigRequest(plan.MetricsConfig),
 	}
 
 	// Send request
@@ -468,6 +588,10 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 		state.Provisioning.Cluster.Zones = zones
 	}
 
+	if foundPool.MetricsConfig != nil && !foundPool.MetricsConfig.Inherit {
+		state.MetricsConfig = readMetricsConfigResponse(foundPool.MetricsConfig)
+	}
+
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -541,9 +665,14 @@ func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.Modi
 		// When `family` is newly removed from config, API will resolve and pin the current cell default on apply.
 		if familyWasConfigured && !familyIsConfigured && !state.Provisioning.Flex.Family.IsNull() {
 			plan.Provisioning.Flex.Family = types.StringUnknown()
-			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 		}
 	}
+
+	if plan.MetricsConfig != nil && plan.MetricsConfig.CloudWatch != nil {
+		plan.MetricsConfig.Disabled = types.BoolValue(false)
+	}
+
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -587,7 +716,8 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 		}
 	}
 	requestMap := map[string]any{
-		"provisioning": buildProvisioningRequest(plan.Provisioning, family),
+		"provisioning":   buildProvisioningRequest(plan.Provisioning, family),
+		"metrics_config": buildMetricsConfigRequest(plan.MetricsConfig),
 	}
 
 	requestJson, err := json.Marshal(requestMap)

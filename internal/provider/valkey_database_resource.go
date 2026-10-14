@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -33,8 +36,9 @@ type ValkeyDatabaseResource struct {
 
 // ValkeyDatabaseResourceModel describes the resource data model.
 type ValkeyDatabaseResourceModel struct {
-	Name     types.String `tfsdk:"name"`
-	PoolName types.String `tfsdk:"pool_name"`
+	Name          types.String                `tfsdk:"name"`
+	PoolName      types.String                `tfsdk:"pool_name"`
+	MetricsConfig *CustomerMetricsConfigModel `tfsdk:"metrics_config"`
 }
 
 func (r *ValkeyDatabaseResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -53,6 +57,37 @@ func (r *ValkeyDatabaseResource) Schema(ctx context.Context, req resource.Schema
 			"pool_name": schema.StringAttribute{
 				MarkdownDescription: "The name of the Capacity Pool that this Database is pinned to.",
 				Required:            true,
+			},
+			"metrics_config": schema.SingleNestedAttribute{
+				MarkdownDescription: "Optional configuration for exporting CloudWatch metrics. When omitted, the Database inherits its Pool's metrics config.",
+				Optional:            true,
+				Attributes: map[string]schema.Attribute{
+					"disabled": schema.BoolAttribute{
+						Description: "Disable delivery of this Database's metrics to your CloudWatch account.",
+						Optional:    true,
+						Computed:    true,
+						Validators: []validator.Bool{
+							boolvalidator.Equals(true),
+							boolvalidator.ExactlyOneOf(
+								path.MatchRelative().AtParent().AtName("cloud_watch"),
+							),
+						},
+					},
+					"cloud_watch": schema.SingleNestedAttribute{
+						Description: "Deliver this Database's metrics to your CloudWatch account.",
+						Optional:    true,
+						Attributes: map[string]schema.Attribute{
+							"iam_role_arn": schema.StringAttribute{
+								MarkdownDescription: "The ARN of the IAM role that Momento will assume to export metrics.",
+								Required:            true,
+							},
+							"region": schema.StringAttribute{
+								MarkdownDescription: "The AWS region where the metrics will be exported to. When omitted, defaults to the region this Database runs in.",
+								Optional:            true,
+							},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -81,8 +116,9 @@ func (r *ValkeyDatabaseResource) Configure(ctx context.Context, req resource.Con
 }
 
 type ValkeyDatabaseData struct {
-	Name     string `json:"name"`
-	PoolName string `json:"pool_name"`
+	Name          string                     `json:"name"`
+	PoolName      string                     `json:"pool_name"`
+	MetricsConfig *CustomerMetricsConfigData `json:"metrics_config"`
 }
 
 func (r *ValkeyDatabaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -99,8 +135,9 @@ func (r *ValkeyDatabaseResource) Create(ctx context.Context, req resource.Create
 	postUrl := fmt.Sprintf("%s/database/%s", r.httpEndpoint, plan.Name.ValueString())
 
 	requestMap := map[string]any{
-		"name":      plan.Name.ValueString(),
-		"pool_name": plan.PoolName.ValueString(),
+		"name":           plan.Name.ValueString(),
+		"pool_name":      plan.PoolName.ValueString(),
+		"metrics_config": buildMetricsConfigRequest(plan.MetricsConfig),
 	}
 
 	requestJson, err := json.Marshal(requestMap)
@@ -124,10 +161,18 @@ func (r *ValkeyDatabaseResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create Valkey Database, got error: %s", err))
 		return
 	}
+	body, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
-		body, _ := io.ReadAll(httpResp.Body)
 		msg := fmt.Sprintf("Unable to create Valkey Database, got non-200 response: %s %s", httpResp.Status, string(body))
 		resp.Diagnostics.AddError("Client Error", msg)
+		return
+	}
+
+	// Map response body to schema and populate computed attribute values
+	var database ValkeyDatabaseData
+	err = json.Unmarshal(body, &database)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from creating Valkey Database, got error: %v", err))
 		return
 	}
 
@@ -201,6 +246,10 @@ func (r *ValkeyDatabaseResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
+	if foundDatabase.MetricsConfig != nil && !foundDatabase.MetricsConfig.Inherit {
+		state.MetricsConfig = readMetricsConfigResponse(foundDatabase.MetricsConfig)
+	}
+
 	// Set refreshed state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -220,19 +269,94 @@ func (r *ValkeyDatabaseResource) ModifyPlan(ctx context.Context, req resource.Mo
 		return
 	}
 
-	if !plan.Name.Equal(state.Name) || !plan.PoolName.Equal(state.PoolName) {
+	if !plan.Name.Equal(state.Name) {
 		resp.Diagnostics.AddWarning(
-			"Valkey Database Cannot Be Updated",
+			"Valkey Database Cannot Be Renamed",
 			fmt.Sprintf(
-				"Valkey Database resource does not support updates, so applying this plan will fail for Database %s. %s",
+				"Valkey Database resource does not support renaming, so applying this plan will fail for Database %s. %s",
 				state.Name.ValueString(), databaseUpdateTip))
+		return
+	} else if !plan.PoolName.Equal(state.PoolName) {
+		resp.Diagnostics.AddWarning(
+			"Valkey Database Cannot Be Moved",
+			fmt.Sprintf(
+				"Valkey Database resource does not support moving to a different Pool, so applying this plan will fail for Database %s. %s",
+				state.Name.ValueString(), databaseUpdateTip))
+		return
 	}
+
+	if plan.MetricsConfig != nil && plan.MetricsConfig.CloudWatch != nil {
+		plan.MetricsConfig.Disabled = types.BoolValue(false)
+	}
+
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *ValkeyDatabaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Valkey Database Cannot Be Updated",
-		fmt.Sprintf("Valkey Database resource does not support updates. %s", databaseUpdateTip))
+	var plan, state ValkeyDatabaseResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !plan.Name.Equal(state.Name) {
+		resp.Diagnostics.AddError(
+			"Valkey Database Cannot Be Renamed",
+			fmt.Sprintf(
+				"Valkey Database resource does not support renaming. %s", databaseUpdateTip))
+		return
+	} else if !plan.PoolName.Equal(state.PoolName) {
+		resp.Diagnostics.AddError(
+			"Valkey Database Cannot Be Moved",
+			fmt.Sprintf(
+				"Valkey Database resource does not support moving to a different Pool. %s", databaseUpdateTip))
+		return
+	}
+
+	client := *r.httpClient
+	patchUrl := fmt.Sprintf("%s/database/%s", r.httpEndpoint, plan.Name.ValueString())
+	requestMap := map[string]any{
+		"metrics_config": buildMetricsConfigRequest(plan.MetricsConfig),
+	}
+
+	requestJson, err := json.Marshal(requestMap)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to marshal request body, got error: %s", err))
+		return
+	}
+	requestBody := bytes.NewBuffer(requestJson)
+	patchRequest, err := http.NewRequest("PATCH", patchUrl, requestBody)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to update Valkey Database, got error: %s", err))
+		return
+	}
+	patchRequest.Header.Set("Content-Type", "application/json")
+	patchRequest.Header.Set("Authorization", r.httpAuthToken)
+	httpResp, err := client.Do(patchRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Valkey Database, got error: %s", err))
+		return
+	}
+	body, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode >= 300 {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Valkey Database, got non-200 response: %s %s", httpResp.Status, string(body)))
+		return
+	}
+
+	// Map response body to schema and populate computed attribute values
+	var database ValkeyDatabaseData
+	err = json.Unmarshal(body, &database)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from updating Valkey Database, got error: %v", err))
+		return
+	}
+
+	// Save data into Terraform state
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func describeValkeyDatabase(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ValkeyDatabaseData, error) {

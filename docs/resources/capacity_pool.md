@@ -34,6 +34,12 @@ resource "momento_capacity_pool" "example_flex" {
       ]
     }
   }
+  metrics_config = {
+    cloud_watch = {
+      iam_role_arn = local.metrics_iam_role
+      region       = "us-east-1"
+    }
+  }
 }
 
 resource "momento_capacity_pool" "example_cluster" {
@@ -51,6 +57,13 @@ resource "momento_capacity_pool" "example_cluster" {
       ]
     }
   }
+  metrics_config = {
+    disabled = true
+  }
+}
+
+locals {
+  metrics_iam_role = "arn:aws:iam::123456789012:role/MomentoMetricsRole"
 }
 ```
 
@@ -64,6 +77,7 @@ resource "momento_capacity_pool" "example_cluster" {
 
 ### Optional
 
+- `metrics_config` (Attributes) Optional configuration for exporting CloudWatch metrics. When omitted, the Pool inherits your account-wide metrics config. (see [below for nested schema](#nestedatt--metrics_config))
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 <a id="nestedatt--provisioning"></a>
@@ -115,6 +129,27 @@ Required:
 - `max_replicas_per_shard` (Number) The maximum replicas per shard.
 - `min_replicas_per_shard` (Number) The minimum replicas per shard. Set equal to the maximum to pin replication.
 
+
+
+
+<a id="nestedatt--metrics_config"></a>
+### Nested Schema for `metrics_config`
+
+Optional:
+
+- `cloud_watch` (Attributes) Deliver this Pool's metrics to your CloudWatch account. (see [below for nested schema](#nestedatt--metrics_config--cloud_watch))
+- `disabled` (Boolean) Disable delivery of this Pool's metrics to your CloudWatch account.
+
+<a id="nestedatt--metrics_config--cloud_watch"></a>
+### Nested Schema for `metrics_config.cloud_watch`
+
+Required:
+
+- `iam_role_arn` (String) The ARN of the IAM role that Momento will assume to export metrics.
+
+Optional:
+
+- `region` (String) The AWS region where the metrics will be exported to. When omitted, defaults to the region this Pool runs in.
 
 
 
