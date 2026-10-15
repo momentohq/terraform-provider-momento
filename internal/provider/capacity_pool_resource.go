@@ -587,17 +587,30 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	if foundPool.Provisioning.Flex != nil {
-		state.Provisioning.Flex.Capacity.MinGib = types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MinGib))
-		state.Provisioning.Flex.Capacity.MaxGib = types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MaxGib))
-		state.Provisioning.Flex.Replication.MinReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MinReplicasPerShard))
-		state.Provisioning.Flex.Replication.MaxReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MaxReplicasPerShard))
-		state.Provisioning.Flex.Family = types.StringPointerValue(foundPool.Provisioning.Flex.Family)
-		state.Provisioning.Flex.Zones = zones
+		state.Provisioning.Flex = &FlexProvisioningModel{
+			Capacity: CapacityBoundsModel{
+				MinGib: types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MinGib)),
+				MaxGib: types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MaxGib)),
+			},
+			Replication: ReplicationBoundsModel{
+				MinReplicasPerShard: types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MinReplicasPerShard)),
+				MaxReplicasPerShard: types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MaxReplicasPerShard)),
+			},
+			Family: types.StringPointerValue(foundPool.Provisioning.Flex.Family),
+			Zones:  zones,
+		}
+		// In case the pool was deleted and recreated elsewhere with a different mode:
+		// (Pools are identified by name, so there's no other way to know if it's really "our" pool)
+		state.Provisioning.Cluster = nil
 	} else if foundPool.Provisioning.Cluster != nil {
-		state.Provisioning.Cluster.InstanceType = types.StringValue(foundPool.Provisioning.Cluster.InstanceType)
-		state.Provisioning.Cluster.ShardCount = types.Int32Value(int32(foundPool.Provisioning.Cluster.ShardCount))
-		state.Provisioning.Cluster.ReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Cluster.ReplicasPerShard))
-		state.Provisioning.Cluster.Zones = zones
+		state.Provisioning.Cluster = &ClusterProvisioningModel{
+			InstanceType:     types.StringValue(foundPool.Provisioning.Cluster.InstanceType),
+			ShardCount:       types.Int32Value(int32(foundPool.Provisioning.Cluster.ShardCount)),
+			ReplicasPerShard: types.Int32Value(int32(foundPool.Provisioning.Cluster.ReplicasPerShard)),
+			Zones:            zones,
+		}
+		// In case the pool was deleted and recreated elsewhere with a different mode:
+		state.Provisioning.Flex = nil
 	}
 
 	state.MetricsConfig = readMetricsConfigResponse(foundPool.MetricsConfig)

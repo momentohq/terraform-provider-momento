@@ -256,6 +256,10 @@ func (r *ValkeyDatabaseResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
+	// In case the database was deleted and recreated elsewhere under a different pool:
+	// (Databases are identified by name, so there's no other way to know if it's really "our" pool)
+	state.PoolName = types.StringValue(foundDatabase.PoolName)
+
 	state.MetricsConfig = readMetricsConfigResponse(foundDatabase.MetricsConfig)
 
 	// Set refreshed state
