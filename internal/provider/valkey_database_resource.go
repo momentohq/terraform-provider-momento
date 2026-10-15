@@ -258,8 +258,6 @@ func (r *ValkeyDatabaseResource) Read(ctx context.Context, req resource.ReadRequ
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-const databaseUpdateTip = "Instead, please create a new Database, move your resources, and destroy the old Database when you're ready."
-
 func (r *ValkeyDatabaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	// Skip Delete or unconfigured provider.
 	if req.Plan.Raw.IsNull() || r.httpClient == nil {
@@ -288,19 +286,21 @@ func (r *ValkeyDatabaseResource) ModifyPlan(ctx context.Context, req resource.Mo
 		return
 	}
 
-	if !plan.Name.Equal(state.Name) {
-		resp.Diagnostics.AddWarning(
+	const databaseUpdateTip = "Instead, please create a new Database, move your resources, and destroy the old Database when you're ready."
+	if !plan.Name.IsUnknown() && !plan.Name.Equal(state.Name) {
+		resp.Diagnostics.AddError(
 			"Valkey Database Cannot Be Renamed",
 			fmt.Sprintf(
-				"Valkey Database resource does not support renaming, so applying this plan will fail for Database %s. %s",
+				"Valkey Database resource does not support renaming (Database %s). %s",
 				state.Name.ValueString(), databaseUpdateTip))
-	}
-	if !plan.PoolName.Equal(state.PoolName) {
-		resp.Diagnostics.AddWarning(
+		return
+	} else if !plan.PoolName.IsUnknown() && !plan.PoolName.Equal(state.PoolName) {
+		resp.Diagnostics.AddError(
 			"Valkey Database Cannot Be Moved",
 			fmt.Sprintf(
-				"Valkey Database resource does not support moving to a different Pool, so applying this plan will fail for Database %s. %s",
+				"Valkey Database resource does not support moving to a different Pool (Database %s). %s",
 				state.Name.ValueString(), databaseUpdateTip))
+		return
 	}
 }
 
@@ -309,20 +309,6 @@ func (r *ValkeyDatabaseResource) Update(ctx context.Context, req resource.Update
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if !plan.Name.Equal(state.Name) {
-		resp.Diagnostics.AddError(
-			"Valkey Database Cannot Be Renamed",
-			fmt.Sprintf(
-				"Valkey Database resource does not support renaming. %s", databaseUpdateTip))
-		return
-	} else if !plan.PoolName.Equal(state.PoolName) {
-		resp.Diagnostics.AddError(
-			"Valkey Database Cannot Be Moved",
-			fmt.Sprintf(
-				"Valkey Database resource does not support moving to a different Pool. %s", databaseUpdateTip))
 		return
 	}
 

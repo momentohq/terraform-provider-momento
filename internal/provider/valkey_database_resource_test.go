@@ -48,11 +48,13 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 			// Renaming a database should be rejected
 			{
 				Config:      testAccValkeyDatabaseConfig(databaseName2, poolName1, allPoolNames),
+				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("Database Cannot Be Renamed"),
 			},
 			// Moving a database should be rejected, even to an existing pool
 			{
 				Config:      testAccValkeyDatabaseConfig(databaseName1, poolName2, allPoolNames),
+				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("Database Cannot Be Moved"),
 			},
 			// Enabling metrics should be allowed

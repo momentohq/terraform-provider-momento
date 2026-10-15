@@ -634,8 +634,6 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-const poolUpdateTip = "Instead, please create a new Pool, recreate your Databases and data, and destroy the old Pool when you're ready."
-
 // Private state key recording whether `family` was set in config at the *previous* apply,
 // so we know if a null `family` is new (request current default) or existing (keep pinned default).
 const privateKeyFamilyConfigured = "family_configured"
@@ -721,20 +719,21 @@ func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.Modi
 		return
 	}
 
-	if !plan.Name.Equal(state.Name) {
-		resp.Diagnostics.AddWarning(
+	const poolUpdateTip = "Instead, please create a new Pool, recreate your Databases and data, and destroy the old Pool when you're ready."
+	if !plan.Name.IsUnknown() && !plan.Name.Equal(state.Name) {
+		resp.Diagnostics.AddError(
 			"Capacity Pool Cannot Be Renamed",
 			fmt.Sprintf(
-				"Capacity Pool resource does not support renaming, so applying this plan will fail for Pool %s. %s",
+				"Capacity Pool resource does not support renaming (Pool %s). %s",
 				state.Name.ValueString(), poolUpdateTip))
-	}
-
-	if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
-		resp.Diagnostics.AddWarning(
+		return
+	} else if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
+		resp.Diagnostics.AddError(
 			"Capacity Pool Mode Cannot Be Changed",
 			fmt.Sprintf(
-				"Capacity Pool resource does not support changing its provisioning mode, so applying this plan will fail for Pool %s. %s",
+				"Capacity Pool resource does not support changing its provisioning mode (Pool %s). %s",
 				state.Name.ValueString(), poolUpdateTip))
+		return
 	}
 
 	if plan.Provisioning.Flex != nil && state.Provisioning.Flex != nil {
@@ -765,18 +764,6 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 
 	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !plan.Name.Equal(state.Name) {
-		resp.Diagnostics.AddError(
-			"Capacity Pool Cannot Be Renamed",
-			fmt.Sprintf("Capacity Pool resource does not support renaming. %s", poolUpdateTip))
-		return
-	}
-	if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
-		resp.Diagnostics.AddError(
-			"Capacity Pool Mode Cannot Be Changed",
-			fmt.Sprintf("Capacity Pool resource does not support changing its provisioning mode. %s", poolUpdateTip))
 		return
 	}
 

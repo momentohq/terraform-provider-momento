@@ -329,12 +329,13 @@ func (r *ApiKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 			return
 		}
 
-		if !plan.RoleId.Equal(state.RoleId) || !plan.Description.Equal(state.Description) || !plan.Expiry.Equal(state.Expiry) || !plan.ExcludeRefreshToken.Equal(state.ExcludeRefreshToken) {
-			resp.Diagnostics.AddWarning(
+		if (!plan.RoleId.IsUnknown() && !plan.RoleId.Equal(state.RoleId)) || (!plan.Description.IsUnknown() && !plan.Description.Equal(state.Description)) || (!plan.Expiry.IsUnknown() && !plan.Expiry.Equal(state.Expiry)) || (!plan.ExcludeRefreshToken.IsUnknown() && !plan.ExcludeRefreshToken.Equal(state.ExcludeRefreshToken)) {
+			resp.Diagnostics.AddError(
 				"API Key Cannot Be Updated",
 				fmt.Sprintf(
-					"API Key resource does not support updates, so applying this plan will fail for Key %s. %s",
+					"API Key resource does not support updates (Key %s). %s",
 					state.KeyId.ValueString(), keyUpdateTip))
+			return
 		}
 	}
 }
