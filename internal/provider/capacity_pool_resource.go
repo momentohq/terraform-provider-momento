@@ -221,6 +221,45 @@ type CapacityPoolData struct {
 	Provisioning CapacityPoolProvisioningData `json:"provisioning"`
 }
 
+func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel) any {
+	var rawZones []types.String
+	if provisioning.Flex != nil {
+		rawZones = provisioning.Flex.Zones
+	} else if provisioning.Cluster != nil {
+		rawZones = provisioning.Cluster.Zones
+	}
+	zones := make([]string, 0, len(rawZones))
+	for _, az := range rawZones {
+		zones = append(zones, az.ValueString())
+	}
+
+	if provisioning.Flex != nil {
+		return map[string]any{
+			flexApiFieldKey: map[string]any{
+				"capacity": map[string]int32{
+					"min_gib": provisioning.Flex.Capacity.MinGib.ValueInt32(),
+					"max_gib": provisioning.Flex.Capacity.MaxGib.ValueInt32(),
+				},
+				"replication": map[string]int32{
+					"min_replicas_per_shard": provisioning.Flex.Replication.MinReplicasPerShard.ValueInt32(),
+					"max_replicas_per_shard": provisioning.Flex.Replication.MaxReplicasPerShard.ValueInt32(),
+				},
+				"zones": zones,
+			},
+		}
+	} else if provisioning.Cluster != nil {
+		return map[string]any{
+			clusterApiFieldKey: map[string]any{
+				"instance_type":      provisioning.Cluster.InstanceType.ValueString(),
+				"shard_count":        provisioning.Cluster.ShardCount.ValueInt32(),
+				"replicas_per_shard": provisioning.Cluster.ReplicasPerShard.ValueInt32(),
+				"zones":              zones,
+			},
+		}
+	}
+	return nil
+}
+
 func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan CapacityPoolResourceModel
 
@@ -234,39 +273,8 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 	client := *r.httpClient
 	postUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
 
-	provisioning := map[string]any{}
-	if plan.Provisioning.Flex != nil {
-		zones := make([]string, 0, len(plan.Provisioning.Flex.Zones))
-		for _, az := range plan.Provisioning.Flex.Zones {
-			zones = append(zones, az.ValueString())
-		}
-		flex := map[string]any{
-			"capacity": map[string]int32{
-				"min_gib": plan.Provisioning.Flex.Capacity.MinGib.ValueInt32(),
-				"max_gib": plan.Provisioning.Flex.Capacity.MaxGib.ValueInt32(),
-			},
-			"replication": map[string]int32{
-				"min_replicas_per_shard": plan.Provisioning.Flex.Replication.MinReplicasPerShard.ValueInt32(),
-				"max_replicas_per_shard": plan.Provisioning.Flex.Replication.MaxReplicasPerShard.ValueInt32(),
-			},
-			"zones": zones,
-		}
-		provisioning[flexApiFieldKey] = flex
-	} else if plan.Provisioning.Cluster != nil {
-		zones := make([]string, 0, len(plan.Provisioning.Cluster.Zones))
-		for _, az := range plan.Provisioning.Cluster.Zones {
-			zones = append(zones, az.ValueString())
-		}
-		provisioning[clusterApiFieldKey] = map[string]any{
-			"instance_type":      plan.Provisioning.Cluster.InstanceType.ValueString(),
-			"shard_count":        plan.Provisioning.Cluster.ShardCount.ValueInt32(),
-			"replicas_per_shard": plan.Provisioning.Cluster.ReplicasPerShard.ValueInt32(),
-			"zones":              zones,
-		}
-	}
-
 	requestMap := map[string]any{
-		"provisioning": provisioning,
+		"provisioning": buildProvisioningRequest(plan.Provisioning),
 	}
 
 	// Send request
@@ -378,24 +386,27 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 
 	state.Name = types.StringValue(foundPool.Name)
 
+	var rawZones []string
+	if foundPool.Provisioning.Flex != nil {
+		rawZones = foundPool.Provisioning.Flex.Zones
+	} else if foundPool.Provisioning.Cluster != nil {
+		rawZones = foundPool.Provisioning.Cluster.Zones
+	}
+	zones := make([]types.String, 0, len(rawZones))
+	for _, az := range rawZones {
+		zones = append(zones, types.StringValue(az))
+	}
+
 	if foundPool.Provisioning.Flex != nil {
 		state.Provisioning.Flex.Capacity.MinGib = types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MinGib))
 		state.Provisioning.Flex.Capacity.MaxGib = types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MaxGib))
 		state.Provisioning.Flex.Replication.MinReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MinReplicasPerShard))
 		state.Provisioning.Flex.Replication.MaxReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MaxReplicasPerShard))
-		zones := make([]types.String, 0, len(foundPool.Provisioning.Flex.Zones))
-		for _, az := range foundPool.Provisioning.Flex.Zones {
-			zones = append(zones, types.StringValue(az))
-		}
 		state.Provisioning.Flex.Zones = zones
 	} else if foundPool.Provisioning.Cluster != nil {
 		state.Provisioning.Cluster.InstanceType = types.StringValue(foundPool.Provisioning.Cluster.InstanceType)
 		state.Provisioning.Cluster.ShardCount = types.Int32Value(int32(foundPool.Provisioning.Cluster.ShardCount))
 		state.Provisioning.Cluster.ReplicasPerShard = types.Int32Value(int32(foundPool.Provisioning.Cluster.ReplicasPerShard))
-		zones := make([]types.String, 0, len(foundPool.Provisioning.Cluster.Zones))
-		for _, az := range foundPool.Provisioning.Cluster.Zones {
-			zones = append(zones, types.StringValue(az))
-		}
 		state.Provisioning.Cluster.Zones = zones
 	}
 
@@ -461,39 +472,8 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	client := *r.httpClient
 	patchUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
 
-	provisioning := map[string]any{}
-	if plan.Provisioning.Flex != nil {
-		zones := make([]string, 0, len(plan.Provisioning.Flex.Zones))
-		for _, az := range plan.Provisioning.Flex.Zones {
-			zones = append(zones, az.ValueString())
-		}
-		flex := map[string]any{
-			"capacity": map[string]int32{
-				"min_gib": plan.Provisioning.Flex.Capacity.MinGib.ValueInt32(),
-				"max_gib": plan.Provisioning.Flex.Capacity.MaxGib.ValueInt32(),
-			},
-			"replication": map[string]int32{
-				"min_replicas_per_shard": plan.Provisioning.Flex.Replication.MinReplicasPerShard.ValueInt32(),
-				"max_replicas_per_shard": plan.Provisioning.Flex.Replication.MaxReplicasPerShard.ValueInt32(),
-			},
-			"zones": zones,
-		}
-		provisioning[flexApiFieldKey] = flex
-	} else if plan.Provisioning.Cluster != nil {
-		zones := make([]string, 0, len(plan.Provisioning.Cluster.Zones))
-		for _, az := range plan.Provisioning.Cluster.Zones {
-			zones = append(zones, az.ValueString())
-		}
-		provisioning[clusterApiFieldKey] = map[string]any{
-			"instance_type":      plan.Provisioning.Cluster.InstanceType.ValueString(),
-			"shard_count":        plan.Provisioning.Cluster.ShardCount.ValueInt32(),
-			"replicas_per_shard": plan.Provisioning.Cluster.ReplicasPerShard.ValueInt32(),
-			"zones":              zones,
-		}
-	}
-
 	requestMap := map[string]any{
-		"provisioning": provisioning,
+		"provisioning": buildProvisioningRequest(plan.Provisioning),
 	}
 
 	requestJson, err := json.Marshal(requestMap)
