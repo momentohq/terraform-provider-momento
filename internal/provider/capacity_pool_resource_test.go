@@ -122,6 +122,12 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyCellDefault),
 				),
 			},
+			// Test ImportState method (imports existing resources)
+			{
+				ResourceName:      "momento_capacity_pool.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
 			// Destroying should still work with a "renamed" pool
 			{
 				Config:  testAccCapacityPoolConfigFlex(poolName2, familyName1, zones1),

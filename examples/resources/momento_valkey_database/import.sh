@@ -1,0 +1,1 @@
+terraform import momento_valkey_database.example database-name

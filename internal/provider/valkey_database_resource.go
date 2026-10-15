@@ -12,15 +12,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource               = &ValkeyDatabaseResource{}
-	_ resource.ResourceWithConfigure  = &ValkeyDatabaseResource{}
-	_ resource.ResourceWithModifyPlan = &ValkeyDatabaseResource{}
+	_ resource.Resource                = &ValkeyDatabaseResource{}
+	_ resource.ResourceWithConfigure   = &ValkeyDatabaseResource{}
+	_ resource.ResourceWithModifyPlan  = &ValkeyDatabaseResource{}
+	_ resource.ResourceWithImportState = &ValkeyDatabaseResource{}
 )
 
 func NewValkeyDatabaseResource() resource.Resource {
@@ -36,6 +39,7 @@ type ValkeyDatabaseResource struct {
 
 // ValkeyDatabaseResourceModel describes the resource data model.
 type ValkeyDatabaseResourceModel struct {
+	Id            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
 	PoolName      types.String                `tfsdk:"pool_name"`
 	MetricsConfig *CustomerMetricsConfigModel `tfsdk:"metrics_config"`
@@ -50,6 +54,13 @@ func (r *ValkeyDatabaseResource) Schema(ctx context.Context, req resource.Schema
 		MarkdownDescription: "A Valkey Database.",
 
 		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				MarkdownDescription: "The ID of the Valkey Database.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the Valkey Database.",
 				Required:            true,
@@ -178,6 +189,8 @@ func (r *ValkeyDatabaseResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	plan.Id = types.StringValue(plan.Name.ValueString())
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -247,6 +260,8 @@ func (r *ValkeyDatabaseResource) Read(ctx context.Context, req resource.ReadRequ
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read Valkey Database, name \"%s\" not found", state.Name.ValueString()))
 		return
 	}
+
+	state.Id = types.StringValue(foundDatabase.Name)
 
 	// In case the database was deleted and recreated elsewhere under a different pool:
 	// (Databases are identified by name, so there's no other way to know if it's really "our" pool)
@@ -360,8 +375,14 @@ func (r *ValkeyDatabaseResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
+	plan.Id = types.StringValue(plan.Name.ValueString())
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func (r *ValkeyDatabaseResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
 func describeValkeyDatabase(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*ValkeyDatabaseData, error) {

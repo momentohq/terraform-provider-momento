@@ -132,6 +132,12 @@ func TestCreateValkeyDatabaseResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_valkey_database.test", "metrics_config.inherit", "true"),
 				),
 			},
+			// Test ImportState method (imports existing resources)
+			{
+				ResourceName:      "momento_valkey_database.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
 			// Destroying should still work with a renamed database
 			{
 				Config:  testAccValkeyDatabaseConfig(databaseName2, poolName1, allPoolNames),

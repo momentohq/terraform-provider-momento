@@ -86,6 +86,10 @@ locals {
 - `metrics_config` (Attributes) Optional configuration for exporting CloudWatch metrics. When omitted, the Pool inherits your account-wide metrics config. (see [below for nested schema](#nestedatt--metrics_config))
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
+### Read-Only
+
+- `id` (String) The ID of the Capacity Pool.
+
 <a id="nestedatt--provisioning"></a>
 ### Nested Schema for `provisioning`
 
@@ -167,3 +171,13 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+terraform import momento_capacity_pool.example pool-name
+```

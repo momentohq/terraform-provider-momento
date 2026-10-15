@@ -26,9 +26,10 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var (
-	_ resource.Resource               = &CapacityPoolResource{}
-	_ resource.ResourceWithConfigure  = &CapacityPoolResource{}
-	_ resource.ResourceWithModifyPlan = &CapacityPoolResource{}
+	_ resource.Resource                = &CapacityPoolResource{}
+	_ resource.ResourceWithConfigure   = &CapacityPoolResource{}
+	_ resource.ResourceWithModifyPlan  = &CapacityPoolResource{}
+	_ resource.ResourceWithImportState = &CapacityPoolResource{}
 )
 
 const flexApiFieldKey = "managed"
@@ -87,6 +88,7 @@ type CustomerMetricsConfigModel struct {
 
 // CapacityPoolResourceModel describes the resource data model.
 type CapacityPoolResourceModel struct {
+	Id            types.String                  `tfsdk:"id"`
 	Name          types.String                  `tfsdk:"name"`
 	Provisioning  CapacityPoolProvisioningModel `tfsdk:"provisioning"`
 	Timeouts      timeouts.Value                `tfsdk:"timeouts"`
@@ -102,6 +104,13 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 		MarkdownDescription: "A Capacity Pool.",
 
 		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				MarkdownDescription: "The ID of the Capacity Pool.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the Capacity Pool.",
 				Required:            true,
@@ -487,6 +496,8 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	plan.Id = types.StringValue(plan.Name.ValueString())
+
 	if pool.Provisioning.Flex != nil {
 		// API always resolves and returns capacity family:
 		plan.Provisioning.Flex.Family = types.StringPointerValue(pool.Provisioning.Flex.Family)
@@ -564,8 +575,8 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 	var state CapacityPoolResourceModel
 
 	// Read Terraform prior state data into the model
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &state.Name)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("timeouts"), &state.Timeouts)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -588,7 +599,7 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	state.Name = types.StringValue(foundPool.Name)
+	state.Id = types.StringValue(foundPool.Name)
 
 	var rawZones []string
 	if foundPool.Provisioning.Flex != nil {
@@ -837,6 +848,8 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
+	plan.Id = types.StringValue(plan.Name.ValueString())
+
 	if pool.Provisioning.Flex != nil {
 		plan.Provisioning.Flex.Family = types.StringPointerValue(pool.Provisioning.Flex.Family)
 	}
@@ -847,6 +860,14 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	familyConfigured, diags := familyIsConfigured(ctx, req.Config)
 	resp.Diagnostics.Append(diags...)
 	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(familyConfigured))...)
+}
+
+func (r *CapacityPoolResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
+
+	// Treat an imported family as if we know it was the resolved/pinned cell default,
+	// so it's preserved (not re-resolved) if left unconfigured in the next config:
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(false))...)
 }
 
 func describeCapacityPool(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*CapacityPoolData, error) {

@@ -61,6 +61,10 @@ locals {
 
 - `metrics_config` (Attributes) Optional configuration for exporting CloudWatch metrics. When omitted, the Database inherits its Pool's metrics config. (see [below for nested schema](#nestedatt--metrics_config))
 
+### Read-Only
+
+- `id` (String) The ID of the Valkey Database.
+
 <a id="nestedatt--metrics_config"></a>
 ### Nested Schema for `metrics_config`
 
@@ -80,3 +84,13 @@ Required:
 Optional:
 
 - `region` (String) The AWS region where the metrics will be exported to. When omitted, defaults to the region this Database runs in.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+terraform import momento_valkey_database.example database-name
+```
