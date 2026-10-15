@@ -48,6 +48,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.capacity.min_gib", "20"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.replication.min_replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName1),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyName1),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones1))),
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.cluster.%"),
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
@@ -85,6 +86,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.capacity.min_gib", "20"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.replication.min_replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName2),                // changed
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyName2),       // changed
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones2))), // changed
 					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.cluster.%"),
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "metrics_config.%"),
@@ -99,13 +101,14 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
-						// An unknown family is what makes Update send "family": "cell_default"
+						// An unknown resolved_family alongside a null family is what makes Update send "family": "cell_default"
 						plancheck.ExpectUnknownValue("momento_capacity_pool.test",
-							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("family")),
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family")),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyCellDefault),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.family"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
 				),
 			},
 			// Keeping a pool's family configuration removed should keep its family as previously resolved by the API:
@@ -115,11 +118,12 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "NoOp"),
 						plancheck.ExpectKnownValue("momento_capacity_pool.test",
-							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("family"), knownvalue.StringExact(familyCellDefault)),
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family"), knownvalue.StringExact(familyCellDefault)),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyCellDefault),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.family"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
 				),
 			},
 			// Test ImportState method (imports existing resources)
@@ -153,11 +157,13 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
 						plancheck.ExpectUnknownValue("momento_capacity_pool.test",
-							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("family")),
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family")),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyCellDefault),
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.family"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones1))),
 				),
 			},
 			// Change family
@@ -170,6 +176,8 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName2),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyName2),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones1))),
 				),
 			},
 			// Back to default
@@ -179,11 +187,61 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
 						plancheck.ExpectUnknownValue("momento_capacity_pool.test",
-							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("family")),
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family")),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.family"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones1))),
+				),
+			},
+			// Updating a different field should keep its family as previously resolved by the API:
+			{
+				Config: testAccCapacityPoolConfigFlexWithoutFamily(poolName1, zones2),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family"), knownvalue.StringExact(familyCellDefault)),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.family"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones2))), // changed
+				),
+			},
+			// Specifically specify what happens to be the default family
+			{
+				Config: testAccCapacityPoolConfigFlex(poolName1, familyCellDefault, zones2),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+						plancheck.ExpectKnownValue("momento_capacity_pool.test",
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family"), knownvalue.StringExact(familyCellDefault)),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyCellDefault),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones2))),
+				),
+			},
+			// Remove family again to resolve the potentially-new default family
+			{
+				Config: testAccCapacityPoolConfigFlexWithoutFamily(poolName1, zones2),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
+						plancheck.ExpectUnknownValue("momento_capacity_pool.test",
+							tfjsonpath.New("provisioning").AtMapKey("flex").AtMapKey("resolved_family")),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("momento_capacity_pool.test", "provisioning.flex.family"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyCellDefault),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.zones.#", strconv.Itoa(len(zones2))),
 				),
 			},
 		},

@@ -120,7 +120,11 @@ Required:
 
 Optional:
 
-- `family` (String) The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it.
+- `family` (String) The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it (see `resolved_family`).
+
+Read-Only:
+
+- `resolved_family` (String) The capacity family the Pool is using: either `family`, or the cell default it resolved at the time `family` was omitted.
 
 <a id="nestedatt--provisioning--flex--capacity"></a>
 ### Nested Schema for `provisioning.flex.capacity`

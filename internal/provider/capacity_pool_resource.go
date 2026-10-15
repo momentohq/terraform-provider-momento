@@ -57,10 +57,11 @@ type ReplicationBoundsModel struct {
 }
 
 type FlexProvisioningModel struct {
-	Capacity    CapacityBoundsModel    `tfsdk:"capacity"`
-	Replication ReplicationBoundsModel `tfsdk:"replication"`
-	Family      types.String           `tfsdk:"family"`
-	Zones       []types.String         `tfsdk:"zones"`
+	Capacity       CapacityBoundsModel    `tfsdk:"capacity"`
+	Replication    ReplicationBoundsModel `tfsdk:"replication"`
+	Family         types.String           `tfsdk:"family"`
+	ResolvedFamily types.String           `tfsdk:"resolved_family"`
+	Zones          []types.String         `tfsdk:"zones"`
 }
 
 type ClusterProvisioningModel struct {
@@ -155,8 +156,11 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 								},
 							},
 							"family": schema.StringAttribute{
-								MarkdownDescription: "The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it.",
+								MarkdownDescription: "The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it (see `resolved_family`).",
 								Optional:            true,
+							},
+							"resolved_family": schema.StringAttribute{
+								MarkdownDescription: "The capacity family the Pool is using: either `family`, or the cell default it resolved at the time `family` was omitted.",
 								Computed:            true,
 								PlanModifiers: []planmodifier.String{
 									stringplanmodifier.UseStateForUnknown(),
@@ -451,7 +455,7 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 	postUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
 
 	var family any
-	if plan.Provisioning.Flex != nil && !plan.Provisioning.Flex.Family.IsUnknown() {
+	if plan.Provisioning.Flex != nil && !plan.Provisioning.Flex.Family.IsNull() {
 		family = plan.Provisioning.Flex.Family.ValueString()
 	}
 	requestMap := map[string]any{
@@ -500,15 +504,11 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 
 	if pool.Provisioning.Flex != nil {
 		// API always resolves and returns capacity family:
-		plan.Provisioning.Flex.Family = types.StringPointerValue(pool.Provisioning.Flex.Family)
+		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
 	}
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-
-	familyConfigured, diags := familyIsConfigured(ctx, req.Config)
-	resp.Diagnostics.Append(diags...)
-	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(familyConfigured))...)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -577,6 +577,10 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &state.Name)...)
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("timeouts"), &state.Timeouts)...)
+	// API doesn't know whether its `family` was specifically configured or a resolved cell default,
+	// so note that from prior state:
+	var family types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("provisioning").AtName("flex").AtName("family"), &family)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -613,6 +617,11 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	if f := foundPool.Provisioning.Flex; f != nil {
+		resolvedFamily := types.StringPointerValue(f.Family)
+		if !family.IsNull() {
+			// In case family was updated outside Terraform:
+			family = resolvedFamily
+		}
 		state.Provisioning.Flex = &FlexProvisioningModel{
 			Capacity: CapacityBoundsModel{
 				MinGib: types.Int32Value(int32(f.Capacity.MinGib)),
@@ -622,8 +631,9 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 				MinReplicasPerShard: types.Int32Value(int32(f.Replication.MinReplicasPerShard)),
 				MaxReplicasPerShard: types.Int32Value(int32(f.Replication.MaxReplicasPerShard)),
 			},
-			Family: types.StringPointerValue(f.Family),
-			Zones:  zones,
+			Family:         family,
+			ResolvedFamily: resolvedFamily,
+			Zones:          zones,
 		}
 		// In case the pool was deleted and recreated elsewhere with a different mode:
 		// (Pools are identified by name, so there's no other way to know if it's really "our" pool)
@@ -646,29 +656,6 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 }
 
 const poolUpdateTip = "Instead, please create a new Pool, recreate your Databases and data, and destroy the old Pool when you're ready."
-
-// Private state key recording whether `family` was set in config at the *previous* apply,
-// so we know if a null `family` is new (request current default) or existing (keep pinned default).
-const privateKeyFamilyConfigured = "family_configured"
-
-var capacityFamilyPath = path.Root("provisioning").AtName("flex").AtName("family")
-
-func familyIsConfigured(ctx context.Context, config tfsdk.Config) (bool, diag.Diagnostics) {
-	var familyConfigured types.String
-	diags := config.GetAttribute(ctx, capacityFamilyPath, &familyConfigured)
-	return !familyConfigured.IsNull(), diags
-}
-
-func boolAsBytes(isSet bool) []byte {
-	if isSet {
-		return []byte("true")
-	}
-	return []byte("false")
-}
-
-func bytesAsBool(isSet []byte) bool {
-	return string(isSet) == "true"
-}
 
 // completeMetricsConfig sets missing values in the plan's metrics_config,
 // in order to more clearly show changes.
@@ -721,48 +708,46 @@ func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.Modi
 		return
 	}
 
-	// Skip Create.
-	if req.State.Raw.IsNull() {
-		return
-	}
-
-	var state CapacityPoolResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if !plan.Name.IsUnknown() && !plan.Name.Equal(state.Name) {
-		resp.Diagnostics.AddWarning(
-			"Capacity Pool Cannot Be Renamed",
-			fmt.Sprintf(
-				"Capacity Pool resource does not support renaming, so applying this plan will fail for Pool %s. %s",
-				state.Name.ValueString(), poolUpdateTip))
-	}
-
-	if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
-		resp.Diagnostics.AddWarning(
-			"Capacity Pool Mode Cannot Be Changed",
-			fmt.Sprintf(
-				"Capacity Pool resource does not support changing its provisioning mode, so applying this plan will fail for Pool %s. %s",
-				state.Name.ValueString(), poolUpdateTip))
-	}
-
-	if plan.Provisioning.Flex != nil && state.Provisioning.Flex != nil {
-		// If config omits Optional+Computed attribute like `family`,
-		// Terraform copies state->plan, so check config directly instead:
-		familyIsConfigured, diags := familyIsConfigured(ctx, req.Config)
-		resp.Diagnostics.Append(diags...)
-		familyWasConfiguredBytes, diags := req.Private.GetKey(ctx, privateKeyFamilyConfigured)
-		resp.Diagnostics.Append(diags...)
+	if req.State.Raw.IsNull() { // on Create:
+		if plan.Provisioning.Flex != nil {
+			planFamily := plan.Provisioning.Flex.Family
+			if !planFamily.IsNull() {
+				plan.Provisioning.Flex.ResolvedFamily = planFamily
+				resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+			}
+		}
+	} else { // on Update:
+		var state CapacityPoolResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		familyWasConfigured := bytesAsBool(familyWasConfiguredBytes)
 
-		// When `family` is newly removed from config, API will resolve and pin the current cell default on apply.
-		if familyWasConfigured && !familyIsConfigured && !state.Provisioning.Flex.Family.IsNull() {
-			plan.Provisioning.Flex.Family = types.StringUnknown()
+		if !plan.Name.IsUnknown() && !plan.Name.Equal(state.Name) {
+			resp.Diagnostics.AddWarning(
+				"Capacity Pool Cannot Be Renamed",
+				fmt.Sprintf(
+					"Capacity Pool resource does not support renaming, so applying this plan will fail for Pool %s. %s",
+					state.Name.ValueString(), poolUpdateTip))
+		}
+
+		if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
+			resp.Diagnostics.AddWarning(
+				"Capacity Pool Mode Cannot Be Changed",
+				fmt.Sprintf(
+					"Capacity Pool resource does not support changing its provisioning mode, so applying this plan will fail for Pool %s. %s",
+					state.Name.ValueString(), poolUpdateTip))
+		}
+
+		if plan.Provisioning.Flex != nil && state.Provisioning.Flex != nil {
+			planFamily := plan.Provisioning.Flex.Family
+			if planFamily.IsNull() && !state.Provisioning.Flex.Family.IsNull() {
+				// When `family` is newly removed from config, API will resolve and pin the current cell default on apply.
+				plan.Provisioning.Flex.ResolvedFamily = types.StringUnknown()
+			}
+			if !planFamily.IsNull() && !planFamily.Equal(state.Provisioning.Flex.ResolvedFamily) {
+				plan.Provisioning.Flex.ResolvedFamily = planFamily
+			}
 			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 		}
 	}
@@ -797,11 +782,16 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	// The capacity pool API treats `family` differently during create vs update,
 	// but the Terraform provider accepts the same config for both and must translate updates for the API:
 	// - create: nil -> null for cell default. Otherwise, pass along "specified-family-name"
-	// - update: nil -> "cell_default". Otherwise, "specified-family-name" (even "cell_default") -> {"name": "specified-family-name"}
+	// - update: newly nil -> "cell_default". Still nil -> {"name": "previously-resolved-family-name"}.
+	//   Otherwise, "specified-family-name" -> {"name": "specified-family-name"}
 	var family any
 	if plan.Provisioning.Flex != nil {
-		if plan.Provisioning.Flex.Family.IsUnknown() {
+		if plan.Provisioning.Flex.Family.IsNull() && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
 			family = "cell_default"
+		} else if plan.Provisioning.Flex.Family.IsNull() {
+			family = map[string]string{
+				"name": plan.Provisioning.Flex.ResolvedFamily.ValueString(),
+			}
 		} else {
 			family = map[string]string{
 				"name": plan.Provisioning.Flex.Family.ValueString(),
@@ -851,23 +841,17 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	plan.Id = types.StringValue(plan.Name.ValueString())
 
 	if pool.Provisioning.Flex != nil {
-		plan.Provisioning.Flex.Family = types.StringPointerValue(pool.Provisioning.Flex.Family)
+		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
 	}
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-
-	familyConfigured, diags := familyIsConfigured(ctx, req.Config)
-	resp.Diagnostics.Append(diags...)
-	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(familyConfigured))...)
 }
 
 func (r *CapacityPoolResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Read leaves `family` null, so an imported Pool's family counts as a resolved/pinned cell default,
+	// which is preserved (not re-resolved) if left unconfigured in the next config.
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
-
-	// Treat an imported family as if we know it was the resolved/pinned cell default,
-	// so it's preserved (not re-resolved) if left unconfigured in the next config:
-	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateKeyFamilyConfigured, boolAsBytes(false))...)
 }
 
 func describeCapacityPool(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*CapacityPoolData, error) {
