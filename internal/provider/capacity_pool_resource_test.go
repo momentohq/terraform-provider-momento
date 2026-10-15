@@ -59,19 +59,16 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			// Renaming a pool should be rejected
 			{
 				Config:      testAccCapacityPoolConfigFlex(poolName2, familyName1, zones1),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("Pool Cannot Be Renamed"),
 			},
 			// Switching a pool's provisioning *mode* should be rejected
 			{
 				Config:      testAccCapacityPoolConfigCluster(poolName1, zones1),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("Pool Mode Cannot Be Changed"),
 			},
 			// Empty zones should be rejected
 			{
 				Config:      testAccCapacityPoolConfigFlex(poolName1, familyName1, []string{}),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("zones list must contain at least 1 element"),
 			},
 			// Adjusting a pool's provisioning *fields* should be allowed
@@ -220,13 +217,11 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			// Switching a pool's provisioning *mode* should be rejected
 			{
 				Config:      testAccCapacityPoolConfigFlex(poolName1, familyName1, zones1),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("Pool Mode Cannot Be Changed"),
 			},
 			// Empty zones should be rejected
 			{
 				Config:      testAccCapacityPoolConfigCluster(poolName1, []string{}),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("zones list must contain at least 1 element"),
 			},
 			// Adjusting a pool's provisioning *fields* should be allowed

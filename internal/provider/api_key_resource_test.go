@@ -53,17 +53,14 @@ func TestCreateApiKeyResource(t *testing.T) {
 			// Updating an API key should not be allowed
 			{
 				Config:      testAccApiKeyConfig(keyDescription2, roleId1, expiry),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("API Key Cannot Be Updated"),
 			},
 			{
 				Config:      testAccApiKeyConfig(keyDescription1, roleId2, expiry),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("API Key Cannot Be Updated"),
 			},
 			{
 				Config:      testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, true),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("API Key Cannot Be Updated"),
 			},
 			// Destroying should still work with a changed config
@@ -102,12 +99,10 @@ func TestCreateApiKeyResource(t *testing.T) {
 			},
 			{
 				Config:      testAccApiKeyConfig(keyDescription1, roleId1, expiry),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("API Key Cannot Be Updated"),
 			},
 			{
 				Config:      testAccApiKeyConfigWithExcludeRefreshSpecified(keyDescription1, expiry, false),
-				PlanOnly:    true,
 				ExpectError: regexp.MustCompile("API Key Cannot Be Updated"),
 			},
 		},
