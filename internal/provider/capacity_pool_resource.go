@@ -237,6 +237,7 @@ func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRe
 		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
 				Create: true,
+				Delete: true,
 			}),
 		},
 	}
@@ -517,6 +518,14 @@ func (r *CapacityPoolResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, 15*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	client := *r.httpClient
 	deleteUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, state.Name.ValueString())
 	deleteRequest, err := http.NewRequest("DELETE", deleteUrl, nil)
@@ -541,6 +550,12 @@ func (r *CapacityPoolResource) Delete(ctx context.Context, req resource.DeleteRe
 	if httpResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(httpResp.Body)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete Capacity Pool, got non-200 response: %s %s", httpResp.Status, string(body)))
+		return
+	}
+
+	// Poll until this pool is fully deleted
+	if err := r.pollUntilPoolGone(ctx, state.Name.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete Capacity Pool, got error: %s", err.Error()))
 		return
 	}
 }
@@ -892,6 +907,24 @@ func (r *CapacityPoolResource) pollUntilPoolReady(ctx context.Context, poolName 
 				// pool not found, which could be a transient state during creation before the pool is fully registered, keep polling
 			} else if err != nil || foundPool == nil {
 				resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until Pool status is Active", err))
+			}
+		}
+	}
+}
+
+func (r *CapacityPoolResource) pollUntilPoolGone(ctx context.Context, poolName string) error {
+	// Poll until pool status is confirmed deleted (404), ignore any other errors and do not stop polling
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			foundPool, err := describeCapacityPool(ctx, *r.httpClient, poolName, r.httpEndpoint, r.httpAuthToken)
+			if foundPool == nil && err == nil {
+				// Successfully confirmed deleted
+				return nil
 			}
 		}
 	}

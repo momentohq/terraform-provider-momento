@@ -1,5 +1,8 @@
 resource "momento_capacity_pool" "example_flex" {
-  timeouts { create = "3m" }
+  timeouts {
+    create = "3m"
+    delete = "3m"
+  }
 
   name = "flex-pool-name"
   provisioning = {
@@ -28,7 +31,10 @@ resource "momento_capacity_pool" "example_flex" {
 }
 
 resource "momento_capacity_pool" "example_cluster" {
-  timeouts { create = "3m" }
+  timeouts {
+    create = "3m"
+    delete = "3m"
+  }
 
   name = "cluster-pool-name"
   provisioning = {

@@ -17,8 +17,6 @@ import (
 func TestCreateCapacityPoolResource(t *testing.T) {
 	poolName1 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	poolName2 := "terraform-provider-momento-test-" + acctest.RandString(8)
-	poolName3 := "terraform-provider-momento-test-" + acctest.RandString(8)
-	poolName4 := "terraform-provider-momento-test-" + acctest.RandString(8)
 	familyName1 := "standard"
 	familyName2 := "performance"
 	familyCellDefault := "standard"
@@ -144,7 +142,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create a pool with no specified family
 			{
-				Config: testAccCapacityPoolConfigFlexWithoutFamily(poolName2, zones1),
+				Config: testAccCapacityPoolConfigFlexWithoutFamily(poolName1, zones1),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
@@ -158,7 +156,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Change family
 			{
-				Config: testAccCapacityPoolConfigFlex(poolName2, familyName2, zones1),
+				Config: testAccCapacityPoolConfigFlex(poolName1, familyName2, zones1),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -170,7 +168,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Back to default
 			{
-				Config: testAccCapacityPoolConfigFlexWithoutFamily(poolName2, zones1),
+				Config: testAccCapacityPoolConfigFlexWithoutFamily(poolName1, zones1),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -197,14 +195,14 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Create a pool
 			{
-				Config: testAccCapacityPoolConfigCluster(poolName3, zones1),
+				Config: testAccCapacityPoolConfigCluster(poolName1, zones1),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "name", poolName3),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "name", poolName1),
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "provisioning.cluster.%"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.instance_type", "t4g.small"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.replicas_per_shard", "0"),
@@ -218,24 +216,24 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Switching a pool's provisioning *mode* should be rejected
 			{
-				Config:      testAccCapacityPoolConfigFlex(poolName3, familyName1, zones1),
+				Config:      testAccCapacityPoolConfigFlex(poolName1, familyName1, zones1),
 				ExpectError: regexp.MustCompile("Pool Mode Cannot Be Changed"),
 			},
 			// Empty zones should be rejected
 			{
-				Config:      testAccCapacityPoolConfigCluster(poolName3, []string{}),
+				Config:      testAccCapacityPoolConfigCluster(poolName1, []string{}),
 				ExpectError: regexp.MustCompile("zones list must contain at least 1 element"),
 			},
 			// Adjusting a pool's provisioning *fields* should be allowed
 			{
-				Config: testAccCapacityPoolConfigCluster(poolName3, zones2),
+				Config: testAccCapacityPoolConfigCluster(poolName1, zones2),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "name", poolName3),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "name", poolName1),
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "provisioning.cluster.%"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.instance_type", "t4g.small"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.cluster.replicas_per_shard", "0"),
@@ -261,7 +259,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create a pool with metrics
 			{
-				Config: testAccCapacityPoolConfigWithMetrics(poolName4, zones1, iamRole1, &region),
+				Config: testAccCapacityPoolConfigWithMetrics(poolName1, zones1, iamRole1, &region),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
@@ -278,7 +276,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Create a pool with metrics disabled
 			{
-				Config: testAccCapacityPoolConfigWithMetricsBool(poolName4, zones1, "disabled"),
+				Config: testAccCapacityPoolConfigWithMetricsBool(poolName1, zones1, "disabled"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Create"),
@@ -293,7 +291,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Enable metrics
 			{
-				Config: testAccCapacityPoolConfigWithMetrics(poolName4, zones1, iamRole2, &region),
+				Config: testAccCapacityPoolConfigWithMetrics(poolName1, zones1, iamRole2, &region),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -309,7 +307,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Default region
 			{
-				Config: testAccCapacityPoolConfigWithMetrics(poolName4, zones1, iamRole2, nil),
+				Config: testAccCapacityPoolConfigWithMetrics(poolName1, zones1, iamRole2, nil),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -325,7 +323,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Inherit metrics
 			{
-				Config: testAccCapacityPoolConfigCluster(poolName4, zones1),
+				Config: testAccCapacityPoolConfigCluster(poolName1, zones1),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -340,7 +338,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Specifically specify inheriting metrics
 			{
-				Config: testAccCapacityPoolConfigWithMetricsBool(poolName4, zones1, "inherit"),
+				Config: testAccCapacityPoolConfigWithMetricsBool(poolName1, zones1, "inherit"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "NoOp"),
@@ -355,7 +353,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 			},
 			// Disable metrics
 			{
-				Config: testAccCapacityPoolConfigWithMetricsBool(poolName4, zones1, "disabled"),
+				Config: testAccCapacityPoolConfigWithMetricsBool(poolName1, zones1, "disabled"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("momento_capacity_pool.test", "Update"),
@@ -383,7 +381,10 @@ func zonesAsString(zones []string) string {
 func testAccCapacityPoolConfigFlex(name string, family string, zones []string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
@@ -407,7 +408,10 @@ resource "momento_capacity_pool" "test" {
 func testAccCapacityPoolConfigFlexWithoutFamily(name string, zones []string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
@@ -430,7 +434,10 @@ resource "momento_capacity_pool" "test" {
 func testAccCapacityPoolConfigFlexIncomplete(name string, zones []string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
@@ -448,7 +455,10 @@ resource "momento_capacity_pool" "test" {
 func testAccCapacityPoolConfigCluster(name string, zones []string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
@@ -466,7 +476,10 @@ resource "momento_capacity_pool" "test" {
 func testAccCapacityPoolConfigClusterIncomplete(name string, zones []string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
@@ -486,7 +499,10 @@ func testAccCapacityPoolConfigWithMetrics(name string, zones []string, metricsIa
 	}
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
@@ -510,7 +526,10 @@ resource "momento_capacity_pool" "test" {
 func testAccCapacityPoolConfigWithMetricsBool(name string, zones []string, boolFieldName string) string {
 	return fmt.Sprintf(`
 resource "momento_capacity_pool" "test" {
-  timeouts { create = "5s" }
+  timeouts {
+    create = "5s"
+    delete = "3m" // longer bc we actually want to make sure it's deleted, so tests can reuse pool name
+  }
 
   name = %[1]q
   provisioning = {
