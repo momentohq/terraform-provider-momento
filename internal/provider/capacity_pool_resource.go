@@ -666,7 +666,7 @@ func completeMetricsConfig(ctx context.Context, config tfsdk.Config, plan *tfsdk
 	// Terraform copies state->plan, so check config directly first:
 	var rawMetricsConfig types.Object
 	diags := config.GetAttribute(ctx, path.Root("metrics_config"), &rawMetricsConfig)
-	if diags.HasError() {
+	if diags.HasError() || rawMetricsConfig.IsUnknown() {
 		return diags
 	}
 	var metricsConfig CustomerMetricsConfigModel
