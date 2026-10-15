@@ -171,18 +171,10 @@ func (r *ValkeyDatabaseResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create Valkey Database, got error: %s", err))
 		return
 	}
-	body, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(httpResp.Body)
 		msg := fmt.Sprintf("Unable to create Valkey Database, got non-200 response: %s %s", httpResp.Status, string(body))
 		resp.Diagnostics.AddError("Client Error", msg)
-		return
-	}
-
-	// Map response body to schema and populate computed attribute values
-	var database ValkeyDatabaseData
-	err = json.Unmarshal(body, &database)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from creating Valkey Database, got error: %v", err))
 		return
 	}
 
@@ -361,17 +353,9 @@ func (r *ValkeyDatabaseResource) Update(ctx context.Context, req resource.Update
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Valkey Database, got error: %s", err))
 		return
 	}
-	body, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(httpResp.Body)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Valkey Database, got non-200 response: %s %s", httpResp.Status, string(body)))
-		return
-	}
-
-	// Map response body to schema and populate computed attribute values
-	var database ValkeyDatabaseData
-	err = json.Unmarshal(body, &database)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from updating Valkey Database, got error: %v", err))
 		return
 	}
 

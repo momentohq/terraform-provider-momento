@@ -586,27 +586,27 @@ func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadReques
 		zones = append(zones, types.StringValue(az))
 	}
 
-	if foundPool.Provisioning.Flex != nil {
+	if f := foundPool.Provisioning.Flex; f != nil {
 		state.Provisioning.Flex = &FlexProvisioningModel{
 			Capacity: CapacityBoundsModel{
-				MinGib: types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MinGib)),
-				MaxGib: types.Int32Value(int32(foundPool.Provisioning.Flex.Capacity.MaxGib)),
+				MinGib: types.Int32Value(int32(f.Capacity.MinGib)),
+				MaxGib: types.Int32Value(int32(f.Capacity.MaxGib)),
 			},
 			Replication: ReplicationBoundsModel{
-				MinReplicasPerShard: types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MinReplicasPerShard)),
-				MaxReplicasPerShard: types.Int32Value(int32(foundPool.Provisioning.Flex.Replication.MaxReplicasPerShard)),
+				MinReplicasPerShard: types.Int32Value(int32(f.Replication.MinReplicasPerShard)),
+				MaxReplicasPerShard: types.Int32Value(int32(f.Replication.MaxReplicasPerShard)),
 			},
-			Family: types.StringPointerValue(foundPool.Provisioning.Flex.Family),
+			Family: types.StringPointerValue(f.Family),
 			Zones:  zones,
 		}
 		// In case the pool was deleted and recreated elsewhere with a different mode:
 		// (Pools are identified by name, so there's no other way to know if it's really "our" pool)
 		state.Provisioning.Cluster = nil
-	} else if foundPool.Provisioning.Cluster != nil {
+	} else if c := foundPool.Provisioning.Cluster; c != nil {
 		state.Provisioning.Cluster = &ClusterProvisioningModel{
-			InstanceType:     types.StringValue(foundPool.Provisioning.Cluster.InstanceType),
-			ShardCount:       types.Int32Value(int32(foundPool.Provisioning.Cluster.ShardCount)),
-			ReplicasPerShard: types.Int32Value(int32(foundPool.Provisioning.Cluster.ReplicasPerShard)),
+			InstanceType:     types.StringValue(c.InstanceType),
+			ShardCount:       types.Int32Value(int32(c.ShardCount)),
+			ReplicasPerShard: types.Int32Value(int32(c.ReplicasPerShard)),
 			Zones:            zones,
 		}
 		// In case the pool was deleted and recreated elsewhere with a different mode:
