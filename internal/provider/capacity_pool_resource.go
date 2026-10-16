@@ -902,7 +902,7 @@ func describeCapacityPool(ctx context.Context, client http.Client, name string, 
 
 func (r *CapacityPoolResource) pollUntilPoolReady(ctx context.Context, poolName string, resp *resource.CreateResponse) {
 	// Poll until pool status is "active", log any errors but do not stop polling
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
