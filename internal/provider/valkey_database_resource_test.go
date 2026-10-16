@@ -167,8 +167,8 @@ resource "momento_capacity_pool" "%[2]s" {
   provisioning = {
     flex = {
       capacity = {
-        max_gib = 25,
-        min_gib = 20
+        max_gib = 16,
+        min_gib = 3
       },
       replication = {
         max_replicas_per_shard = 1,

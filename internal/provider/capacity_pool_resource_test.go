@@ -45,7 +45,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "name", poolName1),
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "provisioning.flex.%"),
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.capacity.min_gib", "20"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.capacity.min_gib", "3"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.replication.min_replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName1),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyName1),
@@ -83,7 +83,7 @@ func TestCreateCapacityPoolResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "name", poolName1),
 					resource.TestCheckResourceAttrSet("momento_capacity_pool.test", "provisioning.flex.%"),
-					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.capacity.min_gib", "20"),
+					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.capacity.min_gib", "3"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.replication.min_replicas_per_shard", "0"),
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.family", familyName2),                // changed
 					resource.TestCheckResourceAttr("momento_capacity_pool.test", "provisioning.flex.resolved_family", familyName2),       // changed
@@ -454,8 +454,8 @@ resource "momento_capacity_pool" "test" {
   provisioning = {
     flex = {
       capacity = {
-        max_gib = 25,
-        min_gib = 20
+        max_gib = 16,
+        min_gib = 3
       },
       replication = {
         max_replicas_per_shard = 1,
@@ -481,8 +481,8 @@ resource "momento_capacity_pool" "test" {
   provisioning = {
     flex = {
       capacity = {
-        max_gib = 25,
-        min_gib = 20
+        max_gib = 16,
+        min_gib = 3
       },
       replication = {
         max_replicas_per_shard = 1,
