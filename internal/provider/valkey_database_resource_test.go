@@ -165,15 +165,10 @@ resource "momento_capacity_pool" "%[2]s" {
 
   name = %[1]q
   provisioning = {
-    flex = {
-      capacity = {
-        max_gib = 16,
-        min_gib = 3
-      },
-      replication = {
-        max_replicas_per_shard = 1,
-        min_replicas_per_shard = 0
-      },
+    cluster = {
+      instance_type      = "t4g.small",
+      shard_count        = 1,
+      replicas_per_shard = 0,
       zones = [
 	    "usw2-az3",
 		"usw2-az1"
