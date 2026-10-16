@@ -304,6 +304,8 @@ func (r *ApiKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+const keyUpdateTip = "Instead, please generate a new Key, replace the old Key everywhere it's used, and revoke/destroy the old Key when you're ready."
+
 func (r *ApiKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -327,13 +329,12 @@ func (r *ApiKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 			return
 		}
 
-		if !plan.RoleId.Equal(state.RoleId) || !plan.Description.Equal(state.Description) || !plan.Expiry.Equal(state.Expiry) || !plan.ExcludeRefreshToken.Equal(state.ExcludeRefreshToken) {
+		if (!plan.RoleId.IsUnknown() && !plan.RoleId.Equal(state.RoleId)) || (!plan.Description.IsUnknown() && !plan.Description.Equal(state.Description)) || (!plan.Expiry.IsUnknown() && !plan.Expiry.Equal(state.Expiry)) || (!plan.ExcludeRefreshToken.IsUnknown() && !plan.ExcludeRefreshToken.Equal(state.ExcludeRefreshToken)) {
 			resp.Diagnostics.AddWarning(
 				"API Key Cannot Be Updated",
 				fmt.Sprintf(
-					"API Key resource does not support updates, so applying this plan will fail for key %s."+
-						" Instead, please revoke/destroy your key when you're ready and generate a new one.",
-					state.KeyId.ValueString()))
+					"API Key resource does not support updates, so applying this plan will fail for Key %s. %s",
+					state.KeyId.ValueString(), keyUpdateTip))
 		}
 	}
 }
@@ -354,7 +355,9 @@ func validateExpiry(expiry timetypes.RFC3339) (time.Time, diag.Diagnostics) {
 }
 
 func (r *ApiKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("API Key Cannot Be Updated", "API Key resource does not support updates. Instead, please revoke/destroy your key when you're ready and generate a new one.")
+	resp.Diagnostics.AddError(
+		"API Key Cannot Be Updated",
+		fmt.Sprintf("API Key resource does not support updates. %s", keyUpdateTip))
 }
 
 type ListApiKeysResponse struct {

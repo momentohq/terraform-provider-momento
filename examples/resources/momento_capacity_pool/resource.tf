@@ -1,0 +1,58 @@
+resource "momento_capacity_pool" "example_flex" {
+  timeouts {
+    create = "3m"
+    delete = "3m"
+  }
+
+  name = "flex-pool-name"
+  provisioning = {
+    flex = {
+      capacity = {
+        max_gib = 25,
+        min_gib = 20
+      },
+      replication = {
+        max_replicas_per_shard = 1,
+        min_replicas_per_shard = 0
+      },
+      family = "standard",
+      zones = [
+        "usw2-az1",
+        "usw2-az2"
+      ]
+    }
+  }
+  metrics_config = {
+    cloud_watch = {
+      iam_role_arn = local.metrics_iam_role
+      region       = "us-east-1"
+    }
+  }
+}
+
+resource "momento_capacity_pool" "example_cluster" {
+  timeouts {
+    create = "3m"
+    delete = "3m"
+  }
+
+  name = "cluster-pool-name"
+  provisioning = {
+    cluster = {
+      instance_type      = "t4g.medium",
+      shard_count        = 1,
+      replicas_per_shard = 0,
+      zones = [
+        "usw2-az1",
+        "usw2-az2"
+      ]
+    }
+  }
+  metrics_config = {
+    disabled = true
+  }
+}
+
+locals {
+  metrics_iam_role = "arn:aws:iam::123456789012:role/MomentoMetricsRole"
+}

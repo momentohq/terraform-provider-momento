@@ -1,0 +1,947 @@
+package provider
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+)
+
+// Ensure provider defined types fully satisfy framework interfaces.
+var (
+	_ resource.Resource                = &CapacityPoolResource{}
+	_ resource.ResourceWithConfigure   = &CapacityPoolResource{}
+	_ resource.ResourceWithModifyPlan  = &CapacityPoolResource{}
+	_ resource.ResourceWithImportState = &CapacityPoolResource{}
+)
+
+const flexApiFieldKey = "managed"
+const clusterApiFieldKey = "explicit"
+
+func NewCapacityPoolResource() resource.Resource {
+	return &CapacityPoolResource{}
+}
+
+// CapacityPoolResource defines the resource implementation.
+type CapacityPoolResource struct {
+	httpClient    *http.Client
+	httpEndpoint  string
+	httpAuthToken string
+}
+
+type CapacityBoundsModel struct {
+	MinGib types.Int32 `tfsdk:"min_gib"`
+	MaxGib types.Int32 `tfsdk:"max_gib"`
+}
+
+type ReplicationBoundsModel struct {
+	MinReplicasPerShard types.Int32 `tfsdk:"min_replicas_per_shard"`
+	MaxReplicasPerShard types.Int32 `tfsdk:"max_replicas_per_shard"`
+}
+
+type FlexProvisioningModel struct {
+	Capacity       CapacityBoundsModel    `tfsdk:"capacity"`
+	Replication    ReplicationBoundsModel `tfsdk:"replication"`
+	Family         types.String           `tfsdk:"family"`
+	ResolvedFamily types.String           `tfsdk:"resolved_family"`
+	Zones          []types.String         `tfsdk:"zones"`
+}
+
+type ClusterProvisioningModel struct {
+	InstanceType     types.String   `tfsdk:"instance_type"`
+	ShardCount       types.Int32    `tfsdk:"shard_count"`
+	ReplicasPerShard types.Int32    `tfsdk:"replicas_per_shard"`
+	Zones            []types.String `tfsdk:"zones"`
+}
+
+type CapacityPoolProvisioningModel struct {
+	Flex    *FlexProvisioningModel    `tfsdk:"flex"`
+	Cluster *ClusterProvisioningModel `tfsdk:"cluster"`
+}
+
+type CloudWatchMetricsConfigModel struct {
+	CustomerIamRole types.String `tfsdk:"iam_role_arn"` // "iam_role_arn" to match object store Terraform
+	Region          types.String `tfsdk:"region"`
+}
+
+type CustomerMetricsConfigModel struct {
+	Disabled   types.Bool                    `tfsdk:"disabled"`
+	CloudWatch *CloudWatchMetricsConfigModel `tfsdk:"cloud_watch"`
+	Inherit    types.Bool                    `tfsdk:"inherit"`
+}
+
+// CapacityPoolResourceModel describes the resource data model.
+type CapacityPoolResourceModel struct {
+	Id            types.String                  `tfsdk:"id"`
+	Name          types.String                  `tfsdk:"name"`
+	Provisioning  CapacityPoolProvisioningModel `tfsdk:"provisioning"`
+	Timeouts      timeouts.Value                `tfsdk:"timeouts"`
+	MetricsConfig *CustomerMetricsConfigModel   `tfsdk:"metrics_config"`
+}
+
+func (r *CapacityPoolResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_capacity_pool"
+}
+
+func (r *CapacityPoolResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "A Capacity Pool.",
+
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				MarkdownDescription: "The ID of the Capacity Pool.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"name": schema.StringAttribute{
+				MarkdownDescription: "The name of the Capacity Pool.",
+				Required:            true,
+			},
+			"provisioning": schema.SingleNestedAttribute{
+				MarkdownDescription: "The provisioning configuration for the Pool's capacity. The mode is fixed when the Pool is created.",
+				Required:            true,
+				Attributes: map[string]schema.Attribute{
+					"flex": schema.SingleNestedAttribute{
+						Description: "A provisioning mode where you specify capacity and replication bounds, and Momento sizes the Pool within them. Flex mode is sometimes called \"managed mode\".",
+						Optional:    true,
+						Validators: []validator.Object{
+							objectvalidator.ExactlyOneOf(path.MatchRelative().AtParent().AtName("cluster")),
+						},
+						Attributes: map[string]schema.Attribute{
+							"capacity": schema.SingleNestedAttribute{
+								MarkdownDescription: "The Pool's available capacity bounds, in GiB.",
+								Required:            true,
+								Attributes: map[string]schema.Attribute{
+									"min_gib": schema.Int32Attribute{
+										MarkdownDescription: "The minimum requested available capacity, in GiB. Set equal to the maximum to pin capacity.",
+										Required:            true,
+									},
+									"max_gib": schema.Int32Attribute{
+										MarkdownDescription: "The maximum requested available capacity, in GiB.",
+										Required:            true,
+									},
+								},
+							},
+							"replication": schema.SingleNestedAttribute{
+								MarkdownDescription: "The Pool's replication bounds.",
+								Required:            true,
+								Attributes: map[string]schema.Attribute{
+									"min_replicas_per_shard": schema.Int32Attribute{
+										MarkdownDescription: "The minimum replicas per shard. Set equal to the maximum to pin replication.",
+										Required:            true,
+									},
+									"max_replicas_per_shard": schema.Int32Attribute{
+										MarkdownDescription: "The maximum replicas per shard.",
+										Required:            true,
+									},
+								},
+							},
+							"family": schema.StringAttribute{
+								MarkdownDescription: "The capacity family to use. When omitted, the Pool resolves to the cell's current default and pins it (see `resolved_family`).",
+								Optional:            true,
+							},
+							"resolved_family": schema.StringAttribute{
+								MarkdownDescription: "The capacity family the Pool is using: either `family`, or the cell default it resolved at the time `family` was omitted.",
+								Computed:            true,
+								PlanModifiers: []planmodifier.String{
+									stringplanmodifier.UseStateForUnknown(),
+								},
+							},
+							"zones": schema.ListAttribute{
+								MarkdownDescription: "The availability zone IDs across which the Pool's nodes are placed. Must contain at least one zone.",
+								Required:            true,
+								ElementType:         types.StringType,
+								Validators: []validator.List{
+									listvalidator.SizeAtLeast(1),
+								},
+							},
+						},
+					},
+					"cluster": schema.SingleNestedAttribute{
+						Description: "A provisioning mode where you specify the instance type, shard count, replicas per shard, and AZ placement directly. Cluster mode is sometimes called \"explicit mode\".",
+						Optional:    true,
+						Attributes: map[string]schema.Attribute{
+							"instance_type": schema.StringAttribute{
+								MarkdownDescription: "The instance type for the Pool's nodes (for example, r7g.xlarge).",
+								Required:            true,
+							},
+							"shard_count": schema.Int32Attribute{
+								MarkdownDescription: "The number of shards in the Pool.",
+								Required:            true,
+							},
+							"replicas_per_shard": schema.Int32Attribute{
+								MarkdownDescription: "The number of replicas per shard.",
+								Required:            true,
+							},
+							"zones": schema.ListAttribute{
+								MarkdownDescription: "The availability zone IDs across which the Pool's nodes are placed. Must contain at least one zone.",
+								Required:            true,
+								ElementType:         types.StringType,
+								Validators: []validator.List{
+									listvalidator.SizeAtLeast(1),
+								},
+							},
+						},
+					},
+				},
+			},
+			"metrics_config": schema.SingleNestedAttribute{
+				MarkdownDescription: "Optional configuration for exporting CloudWatch metrics. When omitted, the Pool inherits your account-wide metrics config.",
+				Optional:            true,
+				Computed:            true,
+				Attributes: map[string]schema.Attribute{
+					"disabled": schema.BoolAttribute{
+						Description: "Disable delivery of this Pool's metrics to your CloudWatch account.",
+						Optional:    true,
+						Computed:    true,
+						Validators: []validator.Bool{
+							boolvalidator.Equals(true),
+							boolvalidator.ExactlyOneOf(
+								path.MatchRelative().AtParent().AtName("cloud_watch"),
+								path.MatchRelative().AtParent().AtName("inherit"),
+							),
+						},
+					},
+					"cloud_watch": schema.SingleNestedAttribute{
+						Description: "Deliver this Pool's metrics to your CloudWatch account.",
+						Optional:    true,
+						Attributes: map[string]schema.Attribute{
+							"iam_role_arn": schema.StringAttribute{
+								MarkdownDescription: "The ARN of the IAM role that Momento will assume to export metrics.",
+								Required:            true,
+							},
+							"region": schema.StringAttribute{
+								MarkdownDescription: "The AWS region where the metrics will be exported to. When omitted, defaults to the region this Pool runs in.",
+								Optional:            true,
+							},
+						},
+					},
+					"inherit": schema.BoolAttribute{
+						Description: "Remove this Pool's specific metrics config and inherit your account-wide default.",
+						Optional:    true,
+						Computed:    true,
+						Validators: []validator.Bool{
+							boolvalidator.Equals(true),
+						},
+					},
+				},
+			},
+		},
+
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Delete: true,
+			}),
+		},
+	}
+}
+
+func (r *CapacityPoolResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	// Prevent panic if the provider has not been configured.
+	if req.ProviderData == nil {
+		return
+	}
+
+	clients, ok := req.ProviderData.(MomentoClients)
+
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected MomentoClients, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+
+		return
+	}
+
+	r.httpClient = clients.httpClient
+	r.httpEndpoint = clients.httpEndpoint
+	r.httpAuthToken = clients.httpAuthToken
+}
+
+type CapacityBoundsData struct {
+	MinGib uint32 `json:"min_gib"`
+	MaxGib uint32 `json:"max_gib"`
+}
+
+type ReplicationBoundsData struct {
+	MinReplicasPerShard uint32 `json:"min_replicas_per_shard"`
+	MaxReplicasPerShard uint32 `json:"max_replicas_per_shard"`
+}
+
+type FlexProvisioningData struct {
+	Capacity    CapacityBoundsData    `json:"capacity"`
+	Replication ReplicationBoundsData `json:"replication"`
+	Family      *string               `json:"family"`
+	Zones       []string              `json:"zones"`
+}
+
+type ClusterProvisioningData struct {
+	InstanceType     string   `json:"instance_type"`
+	ShardCount       uint32   `json:"shard_count"`
+	ReplicasPerShard uint32   `json:"replicas_per_shard"`
+	Zones            []string `json:"zones"`
+}
+
+type CapacityPoolProvisioningData struct {
+	Flex    *FlexProvisioningData    `json:"managed"`  // Must match flexApiFieldKey
+	Cluster *ClusterProvisioningData `json:"explicit"` // Must match clusterApiFieldKey
+}
+
+type CloudWatchMetricsConfigData struct {
+	CustomerIamRole string  `json:"customer_iam_role"`
+	Region          *string `json:"region"`
+}
+
+type CustomerMetricsConfigData struct {
+	Disabled   bool                         `json:"disabled"`
+	CloudWatch *CloudWatchMetricsConfigData `json:"cloud_watch"`
+	Inherit    bool                         `json:"inherit"`
+}
+
+// UnmarshalJSON accepts the API's metrics config, which may be a string OR an object.
+func (c *CustomerMetricsConfigData) UnmarshalJSON(b []byte) error {
+	*c = CustomerMetricsConfigData{}
+	if string(b) == "null" {
+		return fmt.Errorf("metrics_config unexpectedly null")
+	}
+
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		t := true
+		switch s {
+		case "disabled":
+			c.Disabled = t
+		case "inherit":
+			c.Inherit = t
+		default:
+			return fmt.Errorf("unrecognized metrics_config value %q", s)
+		}
+		return nil
+	}
+
+	// Decode into a separate struct, since decoding into CustomerMetricsConfigData would recurse.
+	var obj struct {
+		CloudWatch *CloudWatchMetricsConfigData `json:"cloud_watch"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return fmt.Errorf("unable to unmarshal metrics_config: %w", err)
+	}
+	c.CloudWatch = obj.CloudWatch
+	return nil
+}
+
+type CapacityPoolData struct {
+	Name          string                       `json:"name"`
+	Provisioning  CapacityPoolProvisioningData `json:"provisioning"`
+	MetricsConfig CustomerMetricsConfigData    `json:"metrics_config"`
+	Status        string                       `json:"status"`
+}
+
+func buildProvisioningRequest(provisioning CapacityPoolProvisioningModel, family any) any {
+	var rawZones []types.String
+	if provisioning.Flex != nil {
+		rawZones = provisioning.Flex.Zones
+	} else if provisioning.Cluster != nil {
+		rawZones = provisioning.Cluster.Zones
+	}
+	zones := make([]string, 0, len(rawZones))
+	for _, az := range rawZones {
+		zones = append(zones, az.ValueString())
+	}
+
+	if provisioning.Flex != nil {
+		flex := map[string]any{
+			"capacity": map[string]int32{
+				"min_gib": provisioning.Flex.Capacity.MinGib.ValueInt32(),
+				"max_gib": provisioning.Flex.Capacity.MaxGib.ValueInt32(),
+			},
+			"replication": map[string]int32{
+				"min_replicas_per_shard": provisioning.Flex.Replication.MinReplicasPerShard.ValueInt32(),
+				"max_replicas_per_shard": provisioning.Flex.Replication.MaxReplicasPerShard.ValueInt32(),
+			},
+			"zones": zones,
+		}
+		if family != nil {
+			flex["family"] = family
+		}
+		return map[string]any{
+			flexApiFieldKey: flex,
+		}
+	} else if provisioning.Cluster != nil {
+		return map[string]any{
+			clusterApiFieldKey: map[string]any{
+				"instance_type":      provisioning.Cluster.InstanceType.ValueString(),
+				"shard_count":        provisioning.Cluster.ShardCount.ValueInt32(),
+				"replicas_per_shard": provisioning.Cluster.ReplicasPerShard.ValueInt32(),
+				"zones":              zones,
+			},
+		}
+	}
+	return nil
+}
+
+func buildMetricsConfigRequest(metricsConfig *CustomerMetricsConfigModel) any {
+	if metricsConfig.CloudWatch != nil {
+		cloud_watch := map[string]string{
+			"customer_iam_role": metricsConfig.CloudWatch.CustomerIamRole.ValueString(),
+		}
+		if !metricsConfig.CloudWatch.Region.IsNull() {
+			cloud_watch["region"] = metricsConfig.CloudWatch.Region.ValueString()
+		}
+		return map[string]any{
+			"cloud_watch": cloud_watch,
+		}
+	} else if metricsConfig.Disabled.ValueBool() {
+		return "disabled"
+	} else if metricsConfig.Inherit.ValueBool() {
+		return "inherit"
+	}
+	return nil
+}
+
+func readMetricsConfigResponse(metricsConfigData CustomerMetricsConfigData) *CustomerMetricsConfigModel {
+	metricsConfig := &CustomerMetricsConfigModel{
+		Disabled: types.BoolValue(metricsConfigData.Disabled),
+		Inherit:  types.BoolValue(metricsConfigData.Inherit),
+	}
+	if metricsConfigData.CloudWatch != nil {
+		metricsConfig.CloudWatch = &CloudWatchMetricsConfigModel{
+			CustomerIamRole: types.StringValue(metricsConfigData.CloudWatch.CustomerIamRole),
+			Region:          types.StringPointerValue(metricsConfigData.CloudWatch.Region),
+		}
+	}
+	return metricsConfig
+}
+
+func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan CapacityPoolResourceModel
+
+	// Retrieve values from the plan
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	createTimeout, diags := plan.Timeouts.Create(ctx, 15*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
+	client := *r.httpClient
+	postUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
+
+	var family any
+	if plan.Provisioning.Flex != nil && !plan.Provisioning.Flex.Family.IsNull() {
+		family = plan.Provisioning.Flex.Family.ValueString()
+	}
+	requestMap := map[string]any{
+		"provisioning":   buildProvisioningRequest(plan.Provisioning, family),
+		"metrics_config": buildMetricsConfigRequest(plan.MetricsConfig),
+	}
+
+	// Send request
+	requestJson, err := json.Marshal(requestMap)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to marshal request body, got error: %s", err))
+		return
+	}
+	requestBody := bytes.NewBuffer(requestJson)
+	postRequest, err := http.NewRequest("POST", postUrl, requestBody)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to create Capacity Pool, got error: %s", err))
+		return
+	}
+	postRequest.Header.Set("Content-Type", "application/json")
+	postRequest.Header.Set("Authorization", r.httpAuthToken)
+	httpResp, err := client.Do(postRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create Capacity Pool, got error: %s", err))
+		return
+	}
+	body, readErr := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode >= 300 {
+		msg := fmt.Sprintf("Unable to create Capacity Pool, got non-200 response: %s %s", httpResp.Status, string(body))
+		resp.Diagnostics.AddError("Client Error", msg)
+		return
+	}
+
+	// Save what's already known, so the created Pool can still be destroyed if parsing fails.
+	plan.Id = types.StringValue(plan.Name.ValueString())
+	if plan.Provisioning.Flex != nil && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
+		// State can't have unknown attribute after apply
+		plan.Provisioning.Flex.ResolvedFamily = types.StringNull()
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Map response body to schema and populate computed attribute values
+	var pool CapacityPoolData
+	if readErr == nil {
+		readErr = json.Unmarshal(body, &pool)
+	}
+	if readErr != nil {
+		resp.Diagnostics.AddWarning("Client Warning", fmt.Sprintf(
+			"Created Capacity Pool \"%s\", but couldn't parse the response: %v. `resolved_family` will be filled in on the next refresh.",
+			plan.Name.ValueString(), readErr))
+	} else if pool.Provisioning.Flex != nil {
+		// API always resolves and returns capacity family:
+		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	// Poll until this pool is fully created
+	// (may need it for a database)
+	r.pollUntilPoolReady(ctx, plan.Name.ValueString(), resp)
+}
+
+func (r *CapacityPoolResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state CapacityPoolResourceModel
+
+	// Read Terraform prior state data into the model
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	deleteTimeout, diags := state.Timeouts.Delete(ctx, 15*time.Minute)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
+	client := *r.httpClient
+	deleteUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, state.Name.ValueString())
+	deleteRequest, err := http.NewRequest("DELETE", deleteUrl, nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to delete Capacity Pool, got error: %s", err))
+		return
+	}
+	deleteRequest.Header.Set("Authorization", r.httpAuthToken)
+
+	httpResp, err := client.Do(deleteRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete Capacity Pool, got error: %s", err))
+		return
+	}
+	if httpResp.StatusCode == 404 {
+		// Already deleted
+		return
+	}
+	if httpResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(httpResp.Body)
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete Capacity Pool, got non-200 response: %s %s", httpResp.Status, string(body)))
+		return
+	}
+
+	// Poll until this pool is fully deleted
+	if err := r.pollUntilPoolGone(ctx, state.Name.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete Capacity Pool, got error: %s", err.Error()))
+		return
+	}
+}
+
+func (r *CapacityPoolResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state CapacityPoolResourceModel
+
+	// Read Terraform prior state data into the model
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &state.Name)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("timeouts"), &state.Timeouts)...)
+	// API doesn't know whether its `family` was specifically configured or a resolved cell default,
+	// so note that from prior state:
+	var family types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("provisioning").AtName("flex").AtName("family"), &family)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Find capacity pool
+	client := *r.httpClient
+	foundPool, err := describeCapacityPool(ctx, client, state.Name.ValueString(), r.httpEndpoint, r.httpAuthToken)
+	if foundPool == nil && err == nil {
+		// Capacity pool not found, remove from state
+		resp.Diagnostics.AddWarning("Capacity Pool Not Found", fmt.Sprintf("The Capacity Pool \"%s\" was not found. It may have been deleted outside of Terraform. Removing from state.", state.Name.ValueString()))
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read Capacity Pool, got error: %s", err))
+		return
+	}
+	if foundPool == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read CapacityPool, name \"%s\" not found", state.Name.ValueString()))
+		return
+	}
+
+	state.Id = types.StringValue(foundPool.Name)
+
+	var rawZones []string
+	if foundPool.Provisioning.Flex != nil {
+		rawZones = foundPool.Provisioning.Flex.Zones
+	} else if foundPool.Provisioning.Cluster != nil {
+		rawZones = foundPool.Provisioning.Cluster.Zones
+	}
+	zones := make([]types.String, 0, len(rawZones))
+	for _, az := range rawZones {
+		zones = append(zones, types.StringValue(az))
+	}
+
+	if f := foundPool.Provisioning.Flex; f != nil {
+		resolvedFamily := types.StringPointerValue(f.Family)
+		if !family.IsNull() {
+			// In case family was updated outside Terraform:
+			family = resolvedFamily
+		}
+		state.Provisioning.Flex = &FlexProvisioningModel{
+			Capacity: CapacityBoundsModel{
+				MinGib: types.Int32Value(int32(f.Capacity.MinGib)),
+				MaxGib: types.Int32Value(int32(f.Capacity.MaxGib)),
+			},
+			Replication: ReplicationBoundsModel{
+				MinReplicasPerShard: types.Int32Value(int32(f.Replication.MinReplicasPerShard)),
+				MaxReplicasPerShard: types.Int32Value(int32(f.Replication.MaxReplicasPerShard)),
+			},
+			Family:         family,
+			ResolvedFamily: resolvedFamily,
+			Zones:          zones,
+		}
+		// In case the pool was deleted and recreated elsewhere with a different mode:
+		// (Pools are identified by name, so there's no other way to know if it's really "our" pool)
+		state.Provisioning.Cluster = nil
+	} else if c := foundPool.Provisioning.Cluster; c != nil {
+		state.Provisioning.Cluster = &ClusterProvisioningModel{
+			InstanceType:     types.StringValue(c.InstanceType),
+			ShardCount:       types.Int32Value(int32(c.ShardCount)),
+			ReplicasPerShard: types.Int32Value(int32(c.ReplicasPerShard)),
+			Zones:            zones,
+		}
+		// In case the pool was deleted and recreated elsewhere with a different mode:
+		state.Provisioning.Flex = nil
+	}
+
+	state.MetricsConfig = readMetricsConfigResponse(foundPool.MetricsConfig)
+
+	// Set refreshed state
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+const poolUpdateTip = "Instead, please create a new Pool, recreate your Databases and data, and destroy the old Pool when you're ready."
+
+// completeMetricsConfig sets missing values in the plan's metrics_config,
+// in order to more clearly show changes.
+func completeMetricsConfig(ctx context.Context, config tfsdk.Config, plan *tfsdk.Plan) diag.Diagnostics {
+	// If config entirely omits Optional+Computed attribute like `metrics_config`,
+	// Terraform copies state->plan, so check config directly first:
+	var rawMetricsConfig types.Object
+	diags := config.GetAttribute(ctx, path.Root("metrics_config"), &rawMetricsConfig)
+	if diags.HasError() || rawMetricsConfig.IsUnknown() {
+		return diags
+	}
+	var metricsConfig CustomerMetricsConfigModel
+	if rawMetricsConfig.IsNull() {
+		metricsConfig = CustomerMetricsConfigModel{
+			Disabled: types.BoolValue(false),
+			Inherit:  types.BoolValue(true),
+		}
+	} else {
+		// Now check plan:
+		diags := plan.GetAttribute(ctx, path.Root("metrics_config"), &metricsConfig)
+		if diags.HasError() {
+			return diags
+		}
+		attrs := rawMetricsConfig.Attributes()
+		if attrs["disabled"].IsNull() {
+			metricsConfig.Disabled = types.BoolValue(false)
+		}
+		if attrs["inherit"].IsNull() {
+			metricsConfig.Inherit = types.BoolValue(false)
+		}
+	}
+	diags.Append(plan.SetAttribute(ctx, path.Root("metrics_config"), metricsConfig)...)
+	return diags
+}
+
+func (r *CapacityPoolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Skip Delete or unconfigured provider.
+	if req.Plan.Raw.IsNull() || r.httpClient == nil {
+		return
+	}
+
+	resp.Diagnostics.Append(completeMetricsConfig(ctx, req.Config, &resp.Plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var plan CapacityPoolResourceModel
+	resp.Diagnostics.Append(resp.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if req.State.Raw.IsNull() { // on Create:
+		if plan.Provisioning.Flex != nil {
+			planFamily := plan.Provisioning.Flex.Family
+			if !planFamily.IsNull() {
+				plan.Provisioning.Flex.ResolvedFamily = planFamily
+				resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+			}
+		}
+	} else { // on Update:
+		var state CapacityPoolResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if !plan.Name.IsUnknown() && !plan.Name.Equal(state.Name) {
+			resp.Diagnostics.AddWarning(
+				"Capacity Pool Cannot Be Renamed",
+				fmt.Sprintf(
+					"Capacity Pool resource does not support renaming, so applying this plan will fail for Pool %s. %s",
+					state.Name.ValueString(), poolUpdateTip))
+		}
+
+		if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
+			resp.Diagnostics.AddWarning(
+				"Capacity Pool Mode Cannot Be Changed",
+				fmt.Sprintf(
+					"Capacity Pool resource does not support changing its provisioning mode, so applying this plan will fail for Pool %s. %s",
+					state.Name.ValueString(), poolUpdateTip))
+		}
+
+		if plan.Provisioning.Flex != nil && state.Provisioning.Flex != nil {
+			planFamily := plan.Provisioning.Flex.Family
+			if planFamily.IsNull() && !state.Provisioning.Flex.Family.IsNull() {
+				// When `family` is newly removed from config, API will resolve and pin the current cell default on apply.
+				plan.Provisioning.Flex.ResolvedFamily = types.StringUnknown()
+			}
+			if !planFamily.IsNull() && !planFamily.Equal(state.Provisioning.Flex.ResolvedFamily) {
+				plan.Provisioning.Flex.ResolvedFamily = planFamily
+			}
+			resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+		}
+	}
+}
+
+func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state CapacityPoolResourceModel
+
+	// Retrieve values from the plan and current state
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !plan.Name.Equal(state.Name) {
+		resp.Diagnostics.AddError(
+			"Capacity Pool Cannot Be Renamed",
+			fmt.Sprintf("Capacity Pool resource does not support renaming. %s", poolUpdateTip))
+		return
+	}
+	if (plan.Provisioning.Flex != nil && state.Provisioning.Flex == nil) || (plan.Provisioning.Cluster != nil && state.Provisioning.Cluster == nil) {
+		resp.Diagnostics.AddError(
+			"Capacity Pool Mode Cannot Be Changed",
+			fmt.Sprintf("Capacity Pool resource does not support changing its provisioning mode. %s", poolUpdateTip))
+		return
+	}
+
+	client := *r.httpClient
+	patchUrl := fmt.Sprintf("%s/capacity_pool/%s", r.httpEndpoint, plan.Name.ValueString())
+
+	// The capacity pool API treats `family` differently during create vs update,
+	// but the Terraform provider accepts the same config for both and must translate updates for the API:
+	// - create: nil -> null for cell default. Otherwise, pass along "specified-family-name"
+	// - update: newly nil -> "cell_default". Still nil -> omitted (no change).
+	//   Otherwise, "specified-family-name" -> {"name": "specified-family-name"}
+	var family any
+	if plan.Provisioning.Flex != nil {
+		if plan.Provisioning.Flex.Family.IsNull() && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
+			family = "cell_default"
+		} else if !plan.Provisioning.Flex.Family.IsNull() {
+			family = map[string]string{
+				"name": plan.Provisioning.Flex.Family.ValueString(),
+			}
+		}
+	}
+	requestMap := map[string]any{
+		"provisioning":   buildProvisioningRequest(plan.Provisioning, family),
+		"metrics_config": buildMetricsConfigRequest(plan.MetricsConfig),
+	}
+
+	requestJson, err := json.Marshal(requestMap)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to marshal request body, got error: %s", err))
+		return
+	}
+	requestBody := bytes.NewBuffer(requestJson)
+	patchRequest, err := http.NewRequest("PATCH", patchUrl, requestBody)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request to update Capacity Pool, got error: %s", err))
+		return
+	}
+	patchRequest.Header.Set("Content-Type", "application/json")
+	patchRequest.Header.Set("Authorization", r.httpAuthToken)
+	httpResp, err := client.Do(patchRequest)
+	if httpResp != nil {
+		defer func() { _ = httpResp.Body.Close() }()
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Capacity Pool, got error: %s", err))
+		return
+	}
+	body, readErr := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode >= 300 {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Capacity Pool, got non-200 response: %s %s", httpResp.Status, string(body)))
+		return
+	}
+
+	// Save what's already known, in case parsing fails.
+	plan.Id = types.StringValue(plan.Name.ValueString())
+	if plan.Provisioning.Flex != nil && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
+		// State can't have unknown attribute after apply
+		plan.Provisioning.Flex.ResolvedFamily = types.StringNull()
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Map response body to schema and populate computed attribute values
+	var pool CapacityPoolData
+	if readErr == nil {
+		readErr = json.Unmarshal(body, &pool)
+	}
+	if readErr != nil {
+		resp.Diagnostics.AddWarning("Client Warning", fmt.Sprintf(
+			"Updated Capacity Pool \"%s\", but couldn't parse the response: %v. `resolved_family` will be filled in on the next refresh.",
+			plan.Name.ValueString(), readErr))
+	} else if pool.Provisioning.Flex != nil {
+		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	}
+}
+
+func (r *CapacityPoolResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Read leaves `family` null, so an imported Pool's family counts as a resolved/pinned cell default,
+	// which is preserved (not re-resolved) if left unconfigured in the next config.
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
+}
+
+func describeCapacityPool(ctx context.Context, client http.Client, name string, httpEndpoint string, httpAuthToken string) (*CapacityPoolData, error) {
+	getRequest, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/capacity_pool/%s", httpEndpoint, name), nil)
+	if err != nil {
+		return nil, err
+	}
+	getRequest.Header.Set("Authorization", httpAuthToken)
+	getResp, err := client.Do(getRequest)
+	if getResp != nil {
+		defer func() { _ = getResp.Body.Close() }()
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Do not error if 404 not found
+	if getResp.StatusCode == 404 {
+		return nil, nil
+	}
+	if getResp.StatusCode >= 300 {
+		body, _ := io.ReadAll(getResp.Body)
+		return nil, fmt.Errorf("unable to describe Capacity Pool, got non-200 response: %s %s", getResp.Status, string(body))
+	}
+
+	bodyBytes, err := io.ReadAll(getResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response body: %v", err)
+	}
+
+	var pool CapacityPoolData
+	err = json.Unmarshal(bodyBytes, &pool)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
+	}
+	return &pool, nil
+}
+
+func (r *CapacityPoolResource) pollUntilPoolReady(ctx context.Context, poolName string, resp *resource.CreateResponse) {
+	// Poll until pool status is "active", log any errors but do not stop polling
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddWarning(
+				"Capacity Pool Creation",
+				fmt.Sprintf(
+					"Timed out waiting for Capacity Pool \"%[1]s\" to become active: %v. The Pool may still be creating."+
+						" If your other resources need this Pool, poll its status with `momento pool get-status -n \"%[1]s\"` (Momento CLI),"+
+						" then run `terraform apply` again when it's active.", poolName, ctx.Err()),
+			)
+			return
+		case <-ticker.C:
+			foundPool, err := describeCapacityPool(ctx, *r.httpClient, poolName, r.httpEndpoint, r.httpAuthToken)
+			if foundPool != nil && foundPool.Status == "active" {
+				return
+			} else if err == nil && foundPool == nil {
+				// pool not found, which could be a transient state during creation before the pool is fully registered, keep polling
+			} else if err != nil || foundPool == nil {
+				resp.Diagnostics.AddWarning("Describe after create error", fmt.Sprintf("Error: %s. Continuing to poll until Pool status is Active", err))
+			}
+		}
+	}
+}
+
+func (r *CapacityPoolResource) pollUntilPoolGone(ctx context.Context, poolName string) error {
+	// Poll until pool status is confirmed deleted (404), ignore any other errors and do not stop polling
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			foundPool, err := describeCapacityPool(ctx, *r.httpClient, poolName, r.httpEndpoint, r.httpAuthToken)
+			if foundPool == nil && err == nil {
+				// Successfully confirmed deleted
+				return nil
+			}
+		}
+	}
+}
