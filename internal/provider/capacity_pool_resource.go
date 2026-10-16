@@ -485,33 +485,40 @@ func (r *CapacityPoolResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create Capacity Pool, got error: %s", err))
 		return
 	}
-	body, _ := io.ReadAll(httpResp.Body)
+	body, readErr := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
 		msg := fmt.Sprintf("Unable to create Capacity Pool, got non-200 response: %s %s", httpResp.Status, string(body))
 		resp.Diagnostics.AddError("Client Error", msg)
 		return
 	}
 
-	// Map response body to schema and populate computed attribute values
-	var pool CapacityPoolData
-	err = json.Unmarshal(body, &pool)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from creating Capacity Pool, got error: %v", err))
-		return
-	}
-
+	// Save what's already known, so the created Pool can still be destroyed if parsing fails.
 	plan.Id = types.StringValue(plan.Name.ValueString())
-
-	if pool.Provisioning.Flex != nil {
-		// API always resolves and returns capacity family:
-		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
+	if plan.Provisioning.Flex != nil && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
+		// State can't have unknown attribute after apply
+		plan.Provisioning.Flex.ResolvedFamily = types.StringNull()
 	}
-
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// Map response body to schema and populate computed attribute values
+	var pool CapacityPoolData
+	if readErr == nil {
+		readErr = json.Unmarshal(body, &pool)
+	}
+	if readErr != nil {
+		resp.Diagnostics.AddWarning("Client Warning", fmt.Sprintf(
+			"Created Capacity Pool \"%s\", but couldn't parse the response: %v. `resolved_family` will be filled in on the next refresh.",
+			plan.Name.ValueString(), readErr))
+	} else if pool.Provisioning.Flex != nil {
+		// API always resolves and returns capacity family:
+		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// Poll until this pool is fully created
@@ -782,17 +789,13 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 	// The capacity pool API treats `family` differently during create vs update,
 	// but the Terraform provider accepts the same config for both and must translate updates for the API:
 	// - create: nil -> null for cell default. Otherwise, pass along "specified-family-name"
-	// - update: newly nil -> "cell_default". Still nil -> {"name": "previously-resolved-family-name"}.
+	// - update: newly nil -> "cell_default". Still nil -> omitted (no change).
 	//   Otherwise, "specified-family-name" -> {"name": "specified-family-name"}
 	var family any
 	if plan.Provisioning.Flex != nil {
 		if plan.Provisioning.Flex.Family.IsNull() && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
 			family = "cell_default"
-		} else if plan.Provisioning.Flex.Family.IsNull() {
-			family = map[string]string{
-				"name": plan.Provisioning.Flex.ResolvedFamily.ValueString(),
-			}
-		} else {
+		} else if !plan.Provisioning.Flex.Family.IsNull() {
 			family = map[string]string{
 				"name": plan.Provisioning.Flex.Family.ValueString(),
 			}
@@ -824,28 +827,36 @@ func (r *CapacityPoolResource) Update(ctx context.Context, req resource.UpdateRe
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Capacity Pool, got error: %s", err))
 		return
 	}
-	body, _ := io.ReadAll(httpResp.Body)
+	body, readErr := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode >= 300 {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update Capacity Pool, got non-200 response: %s %s", httpResp.Status, string(body)))
 		return
 	}
 
-	// Map response body to schema and populate computed attribute values
-	var pool CapacityPoolData
-	err = json.Unmarshal(body, &pool)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from updating Capacity Pool, got error: %v", err))
+	// Save what's already known, in case parsing fails.
+	plan.Id = types.StringValue(plan.Name.ValueString())
+	if plan.Provisioning.Flex != nil && plan.Provisioning.Flex.ResolvedFamily.IsUnknown() {
+		// State can't have unknown attribute after apply
+		plan.Provisioning.Flex.ResolvedFamily = types.StringNull()
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	plan.Id = types.StringValue(plan.Name.ValueString())
-
-	if pool.Provisioning.Flex != nil {
-		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
+	// Map response body to schema and populate computed attribute values
+	var pool CapacityPoolData
+	if readErr == nil {
+		readErr = json.Unmarshal(body, &pool)
 	}
-
-	// Save data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if readErr != nil {
+		resp.Diagnostics.AddWarning("Client Warning", fmt.Sprintf(
+			"Updated Capacity Pool \"%s\", but couldn't parse the response: %v. `resolved_family` will be filled in on the next refresh.",
+			plan.Name.ValueString(), readErr))
+	} else if pool.Provisioning.Flex != nil {
+		plan.Provisioning.Flex.ResolvedFamily = types.StringPointerValue(pool.Provisioning.Flex.Family)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	}
 }
 
 func (r *CapacityPoolResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
