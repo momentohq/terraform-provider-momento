@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.8.0...v0.9.0) (2026-10-16)
+
+
+### Features
+
+* **pool|database:** Momento Cache ([#92](https://github.com/momentohq/terraform-provider-momento/issues/92)) ([a3cfcce](https://github.com/momentohq/terraform-provider-momento/commit/a3cfccec97ff814863b350e95cb4ea930b3c749b))
+
 ## [0.8.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.7.1...v0.8.0) (2026-10-06)
 
 
