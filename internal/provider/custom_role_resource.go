@@ -511,11 +511,12 @@ type PermissionsData struct {
 	Conditions []ConditionData `json:"conditions,omitzero"`
 }
 
-type CustomRoleData struct {
+type RoleData struct {
 	Id          string          `json:"role_id"`
 	Name        string          `json:"role_name"`
 	Description string          `json:"description"`
 	Permissions PermissionsData `json:"permissions"`
+	RoleType    string          `json:"role_type"`
 }
 
 func (r *CustomRoleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -531,7 +532,7 @@ func (r *CustomRoleResource) Create(ctx context.Context, req resource.CreateRequ
 	client := *r.httpClient
 	postUrl := fmt.Sprintf("%s/roles", r.httpMgaEndpoint)
 
-	requestMap := CustomRoleData{
+	requestMap := RoleData{
 		Name:        plan.Name.ValueString(),
 		Description: plan.Description.ValueString(),
 	}
@@ -586,7 +587,7 @@ func (r *CustomRoleResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	// Map response body to schema and populate computed attribute values
-	var customRole CustomRoleData
+	var customRole RoleData
 	err = json.Unmarshal(body, &customRole)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to unmarshal JSON response from creating custom role, got error: %v", err))
@@ -867,7 +868,7 @@ func (r *CustomRoleResource) Update(ctx context.Context, req resource.UpdateRequ
 	client := *r.httpClient
 	putUrl := fmt.Sprintf("%s/roles/%s", r.httpMgaEndpoint, plan.Id.ValueString())
 
-	requestMap := CustomRoleData{
+	requestMap := RoleData{
 		Name:        plan.Name.ValueString(),
 		Description: plan.Description.ValueString(),
 	}
@@ -946,8 +947,8 @@ func (r *CustomRoleResource) ImportState(ctx context.Context, req resource.Impor
 }
 
 type ListCustomRolesData struct {
-	Roles     []CustomRoleData `json:"roles"`
-	NextToken *string          `json:"next_token"`
+	Roles     []RoleData `json:"roles"`
+	NextToken *string    `json:"next_token"`
 }
 
 func listCustomRoles(client http.Client, httpMgaEndpoint string, httpAuthToken string, nextToken *string) (*ListCustomRolesData, error) {
@@ -984,7 +985,7 @@ func listCustomRoles(client http.Client, httpMgaEndpoint string, httpAuthToken s
 	return &customRolesList, nil
 }
 
-func describeCustomRole(client http.Client, id *string, name *string, httpMgaEndpoint string, httpAuthToken string) (*CustomRoleData, error) {
+func describeCustomRole(client http.Client, id *string, name *string, httpMgaEndpoint string, httpAuthToken string) (*RoleData, error) {
 	if id != nil {
 		getUrl := fmt.Sprintf("%s/roles/%s", httpMgaEndpoint, *id)
 		getRequest, err := http.NewRequest("GET", getUrl, nil)
@@ -1011,12 +1012,15 @@ func describeCustomRole(client http.Client, id *string, name *string, httpMgaEnd
 		if err != nil {
 			return nil, fmt.Errorf("error reading response body: %v", err)
 		}
-		var customRole CustomRoleData
-		err = json.Unmarshal(bodyBytes, &customRole)
+		var foundRole RoleData
+		err = json.Unmarshal(bodyBytes, &foundRole)
 		if err != nil {
 			return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
 		}
-		return &customRole, nil
+		if foundRole.RoleType == "system" {
+			return nil, nil
+		}
+		return &foundRole, nil
 	}
 
 	// Find role by name:
