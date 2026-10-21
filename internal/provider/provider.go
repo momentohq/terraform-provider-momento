@@ -210,11 +210,15 @@ func (p *MomentoProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Create an HTTP client for resources that use Momento HTTP APIs
 	httpClient := &http.Client{}
 	httpEndpoint := fmt.Sprintf("https://api.cache.%s", endpoint)
-	environment := "prod"
+	environment := "registry.prod.a.momentohq.com"
 	if strings.HasSuffix(endpoint, ".preprod.a.momentohq.com") {
-		environment = "preprod"
+		if strings.HasPrefix(endpoint, "cell") {
+			environment = "registry.preprod.a.momentohq.com"
+		} else {
+			environment = endpoint
+		}
 	}
-	httpMgaEndpoint := fmt.Sprintf("https://mga.registry.%s.a.momentohq.com", environment)
+	httpMgaEndpoint := fmt.Sprintf("https://mga.%s", environment)
 
 	// Make the Momento client available during DataSource and Resource
 	// type Configure methods.
