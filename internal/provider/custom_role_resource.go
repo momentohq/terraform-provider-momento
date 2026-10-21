@@ -985,6 +985,41 @@ func listCustomRoles(client http.Client, httpMgaEndpoint string, httpAuthToken s
 }
 
 func describeCustomRole(client http.Client, id *string, name *string, httpMgaEndpoint string, httpAuthToken string) (*CustomRoleData, error) {
+	if id != nil {
+		getUrl := fmt.Sprintf("%s/roles/%s", httpMgaEndpoint, *id)
+		getRequest, err := http.NewRequest("GET", getUrl, nil)
+		if err != nil {
+			return nil, err
+		}
+		getRequest.Header.Set("Authorization", httpAuthToken)
+		getResp, err := client.Do(getRequest)
+		if getResp != nil {
+			defer func() { _ = getResp.Body.Close() }()
+		}
+		if err != nil {
+			return nil, err
+		}
+		if getResp.StatusCode == 404 {
+			return nil, nil
+		}
+		if getResp.StatusCode >= 300 {
+			body, _ := io.ReadAll(getResp.Body)
+			return nil, fmt.Errorf("unable to describe custom role, got non-2xx response: %s %s", getResp.Status, string(body))
+		}
+
+		bodyBytes, err := io.ReadAll(getResp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("error reading response body: %v", err)
+		}
+		var customRole CustomRoleData
+		err = json.Unmarshal(bodyBytes, &customRole)
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
+		}
+		return &customRole, nil
+	}
+
+	// Find role by name:
 	var nextToken *string
 	for {
 		customRolesList, err := listCustomRoles(client, httpMgaEndpoint, httpAuthToken, nextToken)
@@ -992,14 +1027,9 @@ func describeCustomRole(client http.Client, id *string, name *string, httpMgaEnd
 			return nil, fmt.Errorf("error listing custom roles: %v", err)
 		}
 		for _, role := range customRolesList.Roles {
-			if id != nil && role.Id == *id {
+			// Prioritize ID if available; name can change
+			if name != nil && role.Name == *name {
 				return &role, nil
-			}
-			if id == nil {
-				// Prioritize ID if available; name can change
-				if name != nil && role.Name == *name {
-					return &role, nil
-				}
 			}
 		}
 		nextToken = customRolesList.NextToken

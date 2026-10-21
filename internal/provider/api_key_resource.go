@@ -360,16 +360,8 @@ func (r *ApiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		fmt.Sprintf("API Key resource does not support updates. %s", keyUpdateTip))
 }
 
-type ListApiKeysResponse struct {
-	KeyInfo   []ApiKeyInfo `json:"key_info"`
-	NextToken *string      `json:"next_token"`
-}
-
-func listApiKeys(client http.Client, httpMgaEndpoint string, httpAuthToken string, nextToken *string) (*ListApiKeysResponse, error) {
-	getUrl := fmt.Sprintf("%s/api-keys", httpMgaEndpoint)
-	if nextToken != nil {
-		getUrl = fmt.Sprintf("%s?next_token=%v", getUrl, *nextToken)
-	}
+func describeApiKey(client http.Client, keyId string, httpMgaEndpoint string, httpAuthToken string) (*ApiKeyInfo, error) {
+	getUrl := fmt.Sprintf("%s/api-keys/%s", httpMgaEndpoint, keyId)
 	getRequest, err := http.NewRequest("GET", getUrl, nil)
 	if err != nil {
 		return nil, err
@@ -382,39 +374,22 @@ func listApiKeys(client http.Client, httpMgaEndpoint string, httpAuthToken strin
 	if err != nil {
 		return nil, err
 	}
+	if getResp.StatusCode == 404 {
+		return nil, nil
+	}
 	if getResp.StatusCode >= 300 {
 		body, _ := io.ReadAll(getResp.Body)
-		return nil, fmt.Errorf("unable to list API keys, got non-2xx response: %s %s", getResp.Status, string(body))
+		return nil, fmt.Errorf("unable to describe API key, got non-2xx response: %s %s", getResp.Status, string(body))
 	}
 
 	bodyBytes, err := io.ReadAll(getResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error reading response body: %v", err)
 	}
-	var apiKeysList ListApiKeysResponse
-	err = json.Unmarshal(bodyBytes, &apiKeysList)
+	var apiKey ApiKeyInfo
+	err = json.Unmarshal(bodyBytes, &apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling JSON: %v", err)
 	}
-	return &apiKeysList, nil
-}
-
-func describeApiKey(client http.Client, keyId string, httpMgaEndpoint string, httpAuthToken string) (*ApiKeyInfo, error) {
-	var nextToken *string
-	for {
-		apiKeysList, err := listApiKeys(client, httpMgaEndpoint, httpAuthToken, nextToken)
-		if err != nil {
-			return nil, fmt.Errorf("error listing API keys: %v", err)
-		}
-		for _, key := range apiKeysList.KeyInfo {
-			if key.KeyId == keyId {
-				return &key, nil
-			}
-		}
-		nextToken = apiKeysList.NextToken
-		if nextToken == nil {
-			break
-		}
-	}
-	return nil, nil
+	return &apiKey, nil
 }
