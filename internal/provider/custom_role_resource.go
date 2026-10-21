@@ -516,7 +516,7 @@ type RoleData struct {
 	Name        string          `json:"role_name"`
 	Description string          `json:"description"`
 	Permissions PermissionsData `json:"permissions"`
-	RoleType    string          `json:"role_type"`
+	RoleType    string          `json:"role_type,omitempty"`
 }
 
 func (r *CustomRoleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
