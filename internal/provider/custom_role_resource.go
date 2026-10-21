@@ -986,6 +986,7 @@ func listCustomRoles(client http.Client, httpMgaEndpoint string, httpAuthToken s
 }
 
 func describeCustomRole(client http.Client, id *string, name *string, httpMgaEndpoint string, httpAuthToken string) (*RoleData, error) {
+	// Prioritize ID if available; name can change
 	if id != nil {
 		getUrl := fmt.Sprintf("%s/roles/%s", httpMgaEndpoint, *id)
 		getRequest, err := http.NewRequest("GET", getUrl, nil)
@@ -1031,7 +1032,6 @@ func describeCustomRole(client http.Client, id *string, name *string, httpMgaEnd
 			return nil, fmt.Errorf("error listing custom roles: %v", err)
 		}
 		for _, role := range customRolesList.Roles {
-			// Prioritize ID if available; name can change
 			if name != nil && role.Name == *name {
 				return &role, nil
 			}
