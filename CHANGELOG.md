@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.9.0...v0.10.0) (2026-10-21)
+
+
+### Features
+
+* **role|key:** use GET API ([#95](https://github.com/momentohq/terraform-provider-momento/issues/95)) ([b28ef64](https://github.com/momentohq/terraform-provider-momento/commit/b28ef643684ddab9cb7263f36cda09bd1f3c7c35))
+
+
+### Bug Fixes
+
+* MGA endpoint for 3rd cell type ([#94](https://github.com/momentohq/terraform-provider-momento/issues/94)) ([d674409](https://github.com/momentohq/terraform-provider-momento/commit/d674409905249e977f794d062dd45b5dc8cc8e7d))
+
 ## [0.9.0](https://github.com/momentohq/terraform-provider-momento/compare/v0.8.0...v0.9.0) (2026-10-16)
 
 
